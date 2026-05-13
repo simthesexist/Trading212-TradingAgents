@@ -381,16 +381,64 @@ def monitor_check():
 
 @app.route('/api/positions', methods=['GET'])
 def get_positions():
-    """Get open positions from T212"""
+    """Get open positions and PnL summary from T212"""
     global t212_client
     try:
         if t212_client is None:
             init_t212_client()
+
         positions = t212_client.get_positions()
+        orders = t212_client.get_order_history()
+
+        # Calculate PnL from order history
+        monthly_pnl = 0.0
+        yearly_pnl = 0.0
+        alltime_pnl = 0.0
+        today_count = 0
+
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        month_start = datetime(now.year, now.month, 1)
+        year_start = datetime(now.year, 1, 1)
+
+        for order in orders:
+            try:
+                filled = order.get('filledQuantity', 0)
+                avg_price = order.get('filledAvgPrice', 0)
+                current_price = order.get('currentPrice', avg_price)
+                side = order.get('side', '').lower()
+
+                pnl_per_share = (current_price - avg_price) * filled
+                if side == 'sell':
+                    pnl_per_share = -pnl_per_share
+
+                alltime_pnl += pnl_per_share
+
+                # Parse order time
+                order_time_str = order.get('time', '')
+                if order_time_str:
+                    order_time = datetime.fromisoformat(order_time_str.replace('Z', '+00:00'))
+                    if order_time >= month_start:
+                        monthly_pnl += pnl_per_share
+                    if order_time >= year_start:
+                        yearly_pnl += pnl_per_share
+
+                # Today count
+                today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                if order_time >= today_start:
+                    today_count += 1
+            except Exception:
+                continue
+
         return jsonify({
             "status": "success",
             "positions": positions,
-            "count": len(positions)
+            "count": len(positions),
+            "todayCount": today_count,
+            "totalPnL": sum(p.get('pnl', 0) for p in positions),
+            "monthlyPnL": monthly_pnl,
+            "yearlyPnL": yearly_pnl,
+            "allTimePnL": alltime_pnl
         })
     except Exception as e:
         logger.error(f"Failed to get positions: {e}")
