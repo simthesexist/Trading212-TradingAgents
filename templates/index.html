@@ -290,6 +290,9 @@
 
         /* Market Status */
         .market-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
             padding: 10px 15px;
             background: rgba(0,0,0,0.4);
             border-radius: 8px;
@@ -310,7 +313,7 @@
         .market-dot.open { background: #22c55e; }
         .market-dot.closed { background: #eab308; }
         .market-dot.weekend { background: #888; }
-        .market-info { display: flex; flex-direction: column; }
+        .market-info { display: flex; flex-direction: column; align-items: center; text-align: center; }
         #marketText { font-weight: 600; font-size: 14px; color: #eab308; }
         .market-text-open { color: #22c55e; }
         .market-text-closed { color: #eab308; }
