@@ -20,6 +20,38 @@ try:
 except ImportError:
     HAS_NEWS_SENTIMENT = False
 
+from datetime import datetime, timedelta
+import holidays
+
+# UK public holidays (London Stock Exchange)
+UK_HOLIDAYS = holidays.UK(years=range(2020, 2030))
+
+def is_lse_market_open() -> bool:
+    """
+    Check if LSE market is currently open.
+    Returns True if within 07:45-16:45 UTC LSE trading hours (UTC).
+    Handles GMT/BST automatically via Python's timezone handling.
+    UK bank holidays are excluded.
+    """
+    now = datetime.utcnow()
+
+    # Weekend check (Saturday=5, Sunday=6)
+    if now.weekday() >= 5:
+        return False
+
+    # UK bank holiday check
+    if now.date() in UK_HOLIDAYS:
+        return False
+
+    # LSE open: 07:45 to 16:45 (UTC) - 15 min pre-market, 15 min post-market
+    # 07:45 = 7*60+45 = 465 minutes
+    # 16:45 = 16*60+45 = 1005 minutes
+    current_minutes = now.hour * 60 + now.minute
+
+    return 465 <= current_minutes < 1005
+
+    return 465 <= current_minutes < 1005
+
 # Use yfinance as primary (free), fallback to Polygon.io if API key available
 def get_data_provider():
     polygon_key = os.getenv("POLYGON_API_KEY", "")
@@ -374,10 +406,16 @@ class StockMonitor:
 
         while self.running:
             try:
-                alerts = self.check_all_stocks()
-                if alerts:
-                    logger.info(f"Triggered {len(alerts)} alerts")
-                time.sleep(self.poll_interval)
+                # Check if LSE market is open
+                if is_lse_market_open():
+                    alerts = self.check_all_stocks()
+                    if alerts:
+                        logger.info(f"Triggered {len(alerts)} alerts")
+                    time.sleep(self.poll_interval)
+                else:
+                    # Market closed - sleep 5 minutes and check again
+                    logger.info("LSE market closed. Pausing until next trading window.")
+                    time.sleep(300)  # Check again in 5 minutes
             except Exception as e:
                 logger.error(f"Monitor loop error: {e}")
                 time.sleep(self.poll_interval)
@@ -417,6 +455,7 @@ class StockMonitor:
         return {
             "running": self.running,
             "poll_interval": self.poll_interval,
+            "is_market_open": is_lse_market_open(),
             "stocks": stocks_data,
             "recent_alerts": [
                 {

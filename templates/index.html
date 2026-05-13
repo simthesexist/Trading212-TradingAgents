@@ -288,6 +288,32 @@
             color: #fff;
         }
 
+        /* Market Status */
+        .market-status {
+            padding: 10px 15px;
+            background: rgba(0,0,0,0.4);
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .market-status-inner {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+        .market-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .market-dot.open { background: #22c55e; }
+        .market-dot.closed { background: #eab308; }
+        .market-dot.weekend { background: #888; }
+        #marketText { color: #eab308; font-weight: 600; }
+        .market-text-open { color: #22c55e; font-weight: 600; }
+        .market-text-closed { color: #eab308; font-weight: 600; }
+        .market-hours { color: #888; margin-left: auto; }
+
         /* Autonomous Agent Chat Panel */
         .agent-chat-panel {
             margin-top: 20px;
@@ -417,6 +443,13 @@
             <button id="btnLive" class="btn btn-live" onclick="confirmSwitch()">
                 Live
             </button>
+        </div>
+
+        <!-- Market Status -->
+        <div class="market-status">
+            <span class="market-dot closed" id="marketDot"></span>
+            <span id="marketText">Checking market hours...</span>
+            <span class="market-hours" id="marketHours">LSE: 07:45-16:45 UTC (15min pre/post)</span>
         </div>
 
         <div class="account-info">
@@ -583,10 +616,30 @@
                 const data = await res.json();
                 currentMode = data.mode;
                 updateUI(data);
+                updateMarketStatus();
             } catch (e) {
                 document.getElementById('status').textContent = 'Error loading status';
             }
         }
+
+        function updateMarketStatus() {
+            const dot = document.getElementById('marketDot');
+            const text = document.getElementById('marketText');
+            fetch('/monitor').then(r=>r.json()).then(data => {
+                if (data.is_market_open) {
+                    dot.className='market-dot open';
+                    text.textContent='MARKET OPEN';
+                    text.className='market-text-open';
+                } else {
+                    dot.className='market-dot closed';
+                    text.textContent='PAUSED - Outside Trading Hours';
+                    text.className='market-text-closed';
+                }
+            }).catch(()=>{
+                text.className='market-text-closed';
+            });
+        }
+        setInterval(updateMarketStatus, 60000);
 
         function updateUI(data) {
             const badge = document.getElementById('modeBadge');
@@ -761,11 +814,11 @@
                 // Reconnect with exponential backoff (max 5 attempts per symbol)
                 if (reconnectAttempts < MAX_RECONNECT) {
                     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
-                    setTimeout(() => connectAgentStream(currentSymbol), delay);
+                    setTimeout(() => { if (marketOpen) connectAgentStream(currentSymbol); }, delay);
                 } else {
                     reconnectAttempts = 0;  // Reset for next symbol
                     currentSymbol = getNextSymbol();
-                    setTimeout(() => connectAgentStream(currentSymbol), 1000);
+                    setTimeout(() => { if (marketOpen) connectAgentStream(currentSymbol); }, 1000);
                 }
             };
         }
@@ -775,18 +828,48 @@
             loadStatus();
             loadBankAmount();
             loadOpenTrades();
-            currentSymbol = getNextSymbol();  // Start with first symbol
-            setTimeout(() => connectAgentStream(currentSymbol), 500);
+            // Don't start chat immediately - let checkMarketStatus decide
         });
 
-        // Rotate to next symbol every 5 seconds - keep accumulated chat
-        setInterval(function() {
-            // Move to next symbol without clearing stream
-            currentSymbol = getNextSymbol();
-            reconnectAttempts = 0;
-            connectAgentStream(currentSymbol);
-        }, 5000);
+        // Pause AI chat when market is closed
+        let marketOpen = false;  // Start assuming market is closed
+        let chatStarted = false;  // Track if chat rotation has started
 
+        // Check market and pause/resume chat
+        function checkMarketStatus() {
+            fetch('/monitor').then(r=>r.json()).then(data => {
+                const wasOpen = marketOpen;
+                marketOpen = data.is_market_open;
+
+                if (!marketOpen) {
+                    // Market closed - stop chat stream
+                    if (eventSource) { eventSource.close(); eventSource = null; }
+                } else if (marketOpen && !wasOpen && !chatStarted) {
+                    // Market just opened and chat not started yet - start it
+                    startChatRotation();
+                    chatStarted = true;
+                }
+            }).catch(()=>{});
+        }
+
+        function startChatRotation() {
+            // Start with first symbol
+            currentSymbol = getNextSymbol();
+            connectAgentStream(currentSymbol);
+
+            // Rotate every 5 seconds only when market open
+            setInterval(() => {
+                if (marketOpen) {
+                    currentSymbol = getNextSymbol();
+                    reconnectAttempts = 0;
+                    connectAgentStream(currentSymbol);
+                }
+            }, 5000);
+        }
+
+        checkMarketStatus();
+        // Check market every minute
+        setInterval(checkMarketStatus, 60000);
         setInterval(loadStatus, 10000);
     </script>
 </body>
