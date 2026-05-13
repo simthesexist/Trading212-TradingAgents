@@ -363,7 +363,7 @@ class StockMonitor:
 
         # Keep only recent alerts in memory
         self.alerts = [a for a in self.alerts[-50:] if
-                      (datetime.now() - a.timestamp).seconds < 3600]
+                      (datetime.now() - a.timestamp).total_seconds() < 3600]
 
         return all_alerts
 
