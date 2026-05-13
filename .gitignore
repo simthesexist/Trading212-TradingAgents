@@ -1,0 +1,27 @@
+# Environment
+.env
+*.pyc
+__pycache__/
+*.log
+flask.log
+*.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Secrets
+*.pem
+*.key
+secrets/
+credentials/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent internal dirs
+.aionrs/
+.claude/
+.gemini/

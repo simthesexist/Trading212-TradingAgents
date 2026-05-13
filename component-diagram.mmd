@@ -1,0 +1,33 @@
+flowchart TB
+    subgraph External["🔔 External Systems"]
+        TV["TradingView<br/>(Alerts)"]
+    end
+
+    subgraph Core["⚙️ Core Engine"]
+        Flask["Flask Server<br/>(Webhook Receiver)"]
+        TA["TradingAgents<br/>(AI Brain)"]
+    end
+
+    subgraph Data["📊 Data Layer"]
+        yf["yfinance"]
+        av["Alpha Vantage"]
+    end
+
+    subgraph Execution["📈 Execution Layer"]
+        T212C["T212 Client"]
+        T212B["Trading212<br/>(Broker)"]
+    end
+
+    TV -->|"Webhook"| Flask
+    Flask <-->|"Analyze"| TA
+    TA <-->|"Fetch"| Data
+    Flask <-->|"Execute"| T212C
+    T212C -->|"Orders"| T212B
+
+    style TV fill:#1e3a5f,color:#fff,stroke:#3b82f6
+    style Flask fill:#2d1b4e,color:#fff,stroke:#8b5cf6
+    style TA fill:#134e3a,color:#fff,stroke:#10b981
+    style yf fill:#78350f,color:#fff,stroke:#f59e0b
+    style av fill:#78350f,color:#fff,stroke:#f59e0b
+    style T212C fill:#7f1d1d,color:#fff,stroke:#ef4444
+    style T212B fill:#164e63,color:#fff,stroke:#06b6d4

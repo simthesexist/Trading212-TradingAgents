@@ -1,0 +1,20 @@
+sequenceDiagram
+    participant TV as TradingView
+    participant Flask as Flask Server
+    participant TA as TradingAgents
+    participant Data as yfinance/AlphaVantage
+    participant T212 as T212 API
+
+    TV->>+Flask: 1. Webhook POST (alert)
+    Flask->>+TA: 2. Call propagate()
+    TA->>+Data: 3. Fetch market data
+    Data-->>-TA: 4. Return OHLCV, fundamentals
+    TA->>TA: 5. Run analysts
+    TA->>TA: 6. Researchers debate
+    TA-->>-Flask: 7. Return BUY/SELL/HOLD
+    alt Signal != HOLD
+        Flask->>+T212: 8. POST /v2/orders
+        T212->>T212: 9. Execute order
+        T212-->>-Flask: 10. Confirmation
+    end
+    Flask-->>-TV: Response

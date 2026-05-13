@@ -1,0 +1,22 @@
+flowchart LR
+    TV["[TradingView]<br/>Alerts"]
+    Flask["[Flask Server]<br/>Webhook Receiver"]
+    TA["[TradingAgents]<br/>AI Brain"]
+    Data["[Data Providers]<br/>yfinance / Alpha Vantage"]
+    T212C["[T212 Client]<br/>Order Executor"]
+    T212B["[Trading212]<br/>Broker"]
+
+    TV -->|"1. Alert Trigger"| Flask
+    Flask -->|"2. Analyze Signal"| TA
+    TA -->|"3. Market Data"| Data
+    Flask -->|"4. Execute Order"| T212C
+    T212C -->|"5. Order"| T212B
+    T212B -->|"6. Confirmation"| T212C
+    T212C -->|"7. Result"| Flask
+
+    style TV fill:#1e3a5f,color:#fff,stroke:#3b82f6
+    style Flask fill:#1e3a5f,color:#fff,stroke:#8b5cf6
+    style TA fill:#1e3a5f,color:#fff,stroke:#10b981
+    style Data fill:#1e3a5f,color:#fff,stroke:#f59e0b
+    style T212C fill:#1e3a5f,color:#fff,stroke:#ef4444
+    style T212B fill:#1e3a5f,color:#fff,stroke:#06b6d4

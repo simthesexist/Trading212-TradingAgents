@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>T212 Trading Control</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: #16213e;
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #fff;
+        }
+        .mode-display {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .mode-badge {
+            display: inline-block;
+            padding: 12px 30px;
+            border-radius: 50px;
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 2px;
+        }
+        .mode-badge.demo {
+            background: #0d7377;
+            color: #fff;
+        }
+        .mode-badge.live {
+            background: #ff4757;
+            color: #fff;
+            animation: flash 1s infinite;
+        }
+        @keyframes flash {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .endpoint-info {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #888;
+            font-size: 14px;
+        }
+        .warning {
+            background: rgba(255, 71, 87, 0.2);
+            border: 2px solid #ff4757;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: center;
+            color: #ff6b7a;
+            font-weight: bold;
+        }
+        .warning.hidden { display: none; }
+        .buttons {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        .btn:active { transform: scale(0.98); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-demo {
+            background: #0d7377;
+            color: #fff;
+        }
+        .btn-demo:hover:not(:disabled) { background: #14a3a8; }
+        .btn-live {
+            background: #ff4757;
+            color: #fff;
+        }
+        .btn-live:hover:not(:disabled) { background: #ff6b81; }
+        .btn-active { box-shadow: 0 0 0 3px rgba(255,255,255,0.3); }
+        .account-info {
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .account-info h3 {
+            margin-bottom: 15px;
+            color: #aaa;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .account-info .balance {
+            font-size: 32px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 10px;
+        }
+        .account-info .currency {
+            color: #888;
+            font-size: 18px;
+        }
+        .account-info .bank-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        .bank-label {
+            color: #888;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .bank-input {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 6px;
+            padding: 6px 10px;
+            color: #fff;
+            font-size: 14px;
+            width: 100px;
+            text-align: right;
+        }
+        .bank-input:focus {
+            outline: none;
+            border-color: #0d7377;
+        }
+        .bank-input::placeholder { color: #555; }
+        .balance-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin: 8px 0;
+        }
+        .balance-item {
+            text-align: center;
+        }
+        .balance-item-label {
+            display: block;
+            font-size: 10px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 2px;
+        }
+        .balance-item-value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #ccc;
+        }
+        .balance-separator {
+            color: #444;
+            font-size: 18px;
+        }
+        .status {
+            text-align: center;
+            margin-top: 20px;
+            color: #888;
+            font-size: 14px;
+        }
+        .confirm-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            justify-content: center;
+            align-items: center;
+        }
+        .confirm-modal.show { display: flex; }
+        .confirm-box {
+            background: #16213e;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 400px;
+            text-align: center;
+        }
+        .confirm-box h2 {
+            color: #ff4757;
+            margin-bottom: 15px;
+        }
+        .confirm-box p {
+            color: #aaa;
+            margin-bottom: 25px;
+        }
+        .confirm-buttons {
+            display: flex;
+            gap: 15px;
+        }
+        .confirm-buttons .btn {
+            padding: 12px 20px;
+        }
+        .btn-cancel {
+            background: #444;
+            color: #fff;
+        }
+
+        /* Autonomous Agent Chat Panel */
+        .agent-chat-panel {
+            margin-top: 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding-top: 20px;
+        }
+        .agent-chat-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .agent-chat-header h3 {
+            color: #fff;
+            font-size: 14px;
+        }
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: #22c55e;
+            border-radius: 50%;
+            animation: livePulse 1.5s infinite;
+        }
+        @keyframes livePulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .agent-chat-stream {
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 12px;
+            max-height: 450px;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+        }
+        .agent-msg {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            animation: slideIn 0.25s ease;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .agent-msg .msg-time {
+            color: #555;
+            font-size: 10px;
+            min-width: 55px;
+        }
+        .agent-msg .msg-icon {
+            font-size: 12px;
+        }
+        .agent-msg .msg-body {
+            flex: 1;
+        }
+        .agent-msg .msg-agent {
+            color: #888;
+            font-size: 10px;
+            margin-bottom: 1px;
+        }
+        .agent-msg .msg-text {
+            color: #ccc;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .agent-msg.final .msg-agent {
+            color: #ff9f43;
+        }
+        .agent-msg.final .msg-text {
+            color: #fff;
+            font-weight: bold;
+        }
+        .decision-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 6px;
+        }
+        .decision-badge.buy { background: rgba(34, 197, 94, 0.3); color: #22c55e; }
+        .decision-badge.sell { background: rgba(239, 68, 68, 0.3); color: #ef4444; }
+        .decision-badge.hold { background: rgba(250, 204, 21, 0.3); color: #facc15; }
+        .empty-chat {
+            color: #555;
+            font-size: 12px;
+            text-align: center;
+            padding: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>T212 Trading Control</h1>
+
+        <div class="mode-display">
+            <span id="modeBadge" class="mode-badge demo">DEMO</span>
+        </div>
+
+        <div id="endpointInfo" class="endpoint-info">
+            Endpoint: https://demo.trading212.com/api/v0
+        </div>
+
+        <div id="warningBox" class="warning hidden">
+            LIVE MODE — REAL MONEY AT RISK!
+        </div>
+
+        <div class="buttons">
+            <button id="btnDemo" class="btn btn-demo btn-active" onclick="switchMode('demo')">
+                Demo
+            </button>
+            <button id="btnLive" class="btn btn-live" onclick="confirmSwitch()">
+                Live
+            </button>
+        </div>
+
+        <div class="account-info">
+            <h3>Account Balance</h3>
+            <div id="balance" class="balance">—</div>
+            <div id="currency" class="currency"></div>
+            <div class="balance-row">
+                <div class="balance-item">
+                    <span class="balance-item-label">Bank</span>
+                    <span class="balance-item-value">£<span id="bankDisplay">0</span></span>
+                </div>
+                <div class="balance-separator">|</div>
+                <div class="balance-item">
+                    <span class="balance-item-label">Trading</span>
+                    <span class="balance-item-value" id="tradingBalance">£—</span>
+                </div>
+            </div>
+            <div class="bank-row">
+                <span class="bank-label">Set aside Bank:</span>
+                <span>£</span>
+                <input type="number" id="bankAmount" class="bank-input" placeholder="0" value="0" min="0" step="100" onchange="updateTradingBalance()">
+            </div>
+        </div>
+
+        <!-- Autonomous Agent Reasoning Chat -->
+        <div class="agent-chat-panel">
+            <div class="agent-chat-header">
+                <div class="live-dot"></div>
+                <h3>Live Agent Analysis</h3>
+            </div>
+            <div id="agentChatStream" class="agent-chat-stream">
+                <div class="empty-chat">Waiting for analysis...</div>
+            </div>
+        </div>
+
+        <div id="status" class="status">Loading...</div>
+    </div>
+
+    <div id="confirmModal" class="confirm-modal">
+        <div class="confirm-box">
+            <h2>⚠️ Switch to LIVE Mode?</h2>
+            <p>You are about to switch to LIVE trading. Real money will be at risk!</p>
+            <div class="confirm-buttons">
+                <button class="btn btn-cancel" onclick="closeConfirm()">Cancel</button>
+                <button class="btn btn-live" onclick="confirmLive()">Switch to Live</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentMode = 'demo';
+        let bankAmount = parseInt(localStorage.getItem('bankAmount')) || 0;
+        let accountTotal = 0;
+
+        function updateTradingBalance() {
+            const input = document.getElementById('bankAmount');
+            bankAmount = parseInt(input.value) || 0;
+            localStorage.setItem('bankAmount', bankAmount);
+            document.getElementById('bankDisplay').textContent = bankAmount;
+
+            const trading = Math.max(0, accountTotal - bankAmount);
+            const tradingEl = document.getElementById('tradingBalance');
+            tradingEl.textContent = '£' + trading.toFixed(0);
+            tradingEl.style.color = trading > 0 ? '#22c55e' : '#ef4444';
+        }
+
+        function loadBankAmount() {
+            document.getElementById('bankAmount').value = bankAmount || 0;
+            document.getElementById('bankDisplay').textContent = bankAmount || 0;
+            updateTradingBalance();
+        }
+        const MAX_MESSAGES = 50;
+        let eventSource = null;
+
+        async function loadStatus() {
+            try {
+                const res = await fetch('/api/mode');
+                const data = await res.json();
+                currentMode = data.mode;
+                updateUI(data);
+            } catch (e) {
+                document.getElementById('status').textContent = 'Error loading status';
+            }
+        }
+
+        function updateUI(data) {
+            const badge = document.getElementById('modeBadge');
+            const warning = document.getElementById('warningBox');
+            const endpoint = document.getElementById('endpointInfo');
+            const btnDemo = document.getElementById('btnDemo');
+            const btnLive = document.getElementById('btnLive');
+
+            badge.textContent = data.mode.toUpperCase();
+            badge.className = 'mode-badge ' + data.mode;
+
+            if (data.mode === 'demo') {
+                warning.classList.add('hidden');
+                endpoint.textContent = 'Endpoint: https://demo.trading212.com/api/v0';
+                btnDemo.classList.add('btn-active');
+                btnLive.classList.remove('btn-active');
+            } else {
+                warning.classList.remove('hidden');
+                endpoint.textContent = 'Endpoint: https://live.trading212.com/api/v0';
+                btnDemo.classList.remove('btn-active');
+                btnLive.classList.add('btn-active');
+            }
+
+            if (data.account) {
+                accountTotal = data.account.totalValue || 0;
+                document.getElementById('balance').textContent = accountTotal.toFixed(2);
+                document.getElementById('currency').textContent = data.account.currency;
+                updateTradingBalance();
+            }
+
+            document.getElementById('status').textContent = 'Connected — ' + new Date().toLocaleTimeString();
+        }
+
+        async function switchMode(mode) {
+            try {
+                const res = await fetch('/api/mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode })
+                });
+                const data = await res.json();
+                updateUI(data);
+            } catch (e) {
+                document.getElementById('status').textContent = 'Error switching mode';
+            }
+        }
+
+        function confirmSwitch() {
+            if (currentMode === 'live') return;
+            document.getElementById('confirmModal').classList.add('show');
+        }
+
+        function closeConfirm() {
+            document.getElementById('confirmModal').classList.remove('show');
+        }
+
+        function confirmLive() {
+            closeConfirm();
+            switchMode('live');
+        }
+
+        // Autonomous Agent Reasoning Stream
+        let currentSymbol = 'HSBA.L';
+        let symbolIndex = 0;
+        const watchedSymbols = [
+            'HSBA.L', 'LLOY.L', 'STAN.L', 'BARC.L', 'LGEN.L', 'PRU.L', 'NG.L', 'III.L',
+            'BP.L', 'SHEL.L', 'FRES.L', 'GENL.L', 'AZN.L', 'GSK.L',
+            'ULVR.L', 'DGE.L', 'RKT.L', 'BRBY.L', 'ABF.L', 'SBRY.L', 'TSCO.L', 'MKS.L', 'JD.L', 'SMWH.L',
+            'REL.L', 'LSEG.L', 'EXPN.L', 'PSN.L', 'BAB.L', 'RSW.L', 'IAG.L', 'RR.L', 'EZJ.L', 'WIZZ.L', 'ICG.L',
+            'RIO.L', 'BHP.L', 'GLEN.L', 'ANTO.L',
+            'VOD.L', 'FDM.L', 'AAL.L', 'IMB.L', 'SGE.L', 'AUTO.L',
+            'LRE.L', 'UTG.L', 'BLND.L', 'SPX.L', 'Land.L', 'RESI.L',
+            'UU.L', 'SSE.L', 'WPP.L', 'ENT.L', 'BATS.L', 'CCH.L',
+            'CRDA.L', 'JTC.L', 'SYN.L', 'BOW.L', 'XPS.L', 'PLUS.L', 'IPX.L', 'N91.L', 'LIV.L', 'TATE.L',
+            'KGF.L', 'STCM.L', 'DOM.L', 'GNC.L', 'PZC.L', 'HIK.L', 'PTAL.L', 'BME.L', 'CTY.L', 'THRL.L',
+            'ARBB.L', 'GLE.L', 'MONY.L', 'TCAP.L', 'ADF.L'
+        ];
+
+        function getNextSymbol() {
+            symbolIndex = (symbolIndex + 1) % watchedSymbols.length;
+            return watchedSymbols[symbolIndex];
+        }
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT = 5;
+
+        function appendAgentMessage(data) {
+            const stream = document.getElementById('agentChatStream');
+
+            // Remove empty state if present
+            const empty = stream.querySelector('.empty-chat');
+            if (empty) empty.remove();
+
+            // Create message element
+            const div = document.createElement('div');
+            div.className = 'agent-msg' + (data.agent === 'final' ? ' final' : '');
+
+            // Format timestamp
+            const time = data.time || new Date().toLocaleTimeString('en-GB', { hour12: false });
+
+            // Decision badge for final message
+            const badge = data.agent === 'final' && data.decision
+                ? `<span class="decision-badge ${data.decision.toLowerCase()}">${data.decision} ${data.confidence ? (data.confidence * 100).toFixed(0) + '%' : ''}</span>`
+                : '';
+
+            div.innerHTML = `
+                <span class="msg-time">${time}</span>
+                <span class="msg-icon">${data.emoji || '🤖'}</span>
+                <div class="msg-body">
+                    <div class="msg-agent">${data.name || data.agent || 'Agent'}</div>
+                    <div class="msg-text">${data.message || ''}${badge}</div>
+                </div>
+            `;
+
+            stream.appendChild(div);
+
+            // Trim to MAX_MESSAGES (keep only last 50)
+            while (stream.children.length > MAX_MESSAGES) {
+                stream.removeChild(stream.firstChild);
+            }
+
+            // Auto-scroll to bottom (smooth)
+            stream.scrollTo({ top: stream.scrollHeight, behavior: 'smooth' });
+        }
+
+        function clearAgentStream() {
+            const stream = document.getElementById('agentChatStream');
+            stream.innerHTML = '<div class="empty-chat">Waiting for analysis...</div>';
+        }
+
+        function connectAgentStream(symbol) {
+            // Close existing connection
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+
+            currentSymbol = symbol;
+            reconnectAttempts = 0;
+
+            if (!symbol) {
+                clearAgentStream();
+                return;
+            }
+
+            clearAgentStream();
+            eventSource = new EventSource(`/api/chat/stream?symbol=${encodeURIComponent(symbol)}`);
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    // Skip any done events (no longer sent)
+                    if (data.event === 'done') return;
+                    appendAgentMessage(data);
+                } catch (e) {
+                    // Silently ignore parse errors for keepalive comments
+                }
+            };
+
+            eventSource.onerror = function() {
+                eventSource.close();
+                eventSource = null;
+
+                // Reconnect with exponential backoff (max 5 attempts)
+                if (reconnectAttempts < MAX_RECONNECT) {
+                    reconnectAttempts++;
+                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+                    setTimeout(() => connectAgentStream(currentSymbol), delay);
+                }
+            };
+        }
+
+        // Auto-start: analyze different symbols on page load (rotating)
+        window.addEventListener('load', function() {
+            loadStatus();
+            loadBankAmount();
+            currentSymbol = getNextSymbol();  // Start with first symbol
+            setTimeout(() => connectAgentStream(currentSymbol), 500);
+        });
+
+        setInterval(loadStatus, 10000);
+    </script>
+</body>
+</html>
