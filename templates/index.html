@@ -305,14 +305,16 @@
             width: 10px;
             height: 10px;
             border-radius: 50%;
+            margin-top: 3px;
         }
         .market-dot.open { background: #22c55e; }
         .market-dot.closed { background: #eab308; }
         .market-dot.weekend { background: #888; }
-        #marketText { color: #eab308; font-weight: 600; }
-        .market-text-open { color: #22c55e; font-weight: 600; }
-        .market-text-closed { color: #eab308; font-weight: 600; }
-        .market-hours { color: #888; margin-left: auto; }
+        .market-info { display: flex; flex-direction: column; }
+        #marketText { font-weight: 600; font-size: 14px; color: #eab308; }
+        .market-text-open { color: #22c55e; }
+        .market-text-closed { color: #eab308; }
+        .market-hours { color: #888; font-size: 11px; margin-top: 2px; }
 
         /* Autonomous Agent Chat Panel */
         .agent-chat-panel {
@@ -448,8 +450,10 @@
         <!-- Market Status -->
         <div class="market-status">
             <span class="market-dot closed" id="marketDot"></span>
-            <span id="marketText">Checking market hours...</span>
-            <span class="market-hours" id="marketHours">LSE: 07:45-16:45 UTC (15min pre/post)</span>
+            <div class="market-info">
+                <div id="marketText">Checking market hours...</div>
+                <div class="market-hours" id="marketHours">LSE: 07:45-16:45 UTC (15min pre/post)</div>
+            </div>
         </div>
 
         <div class="account-info">
