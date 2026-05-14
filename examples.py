@@ -7,18 +7,13 @@ and the T212 execution layer directly.
 
 from flask_webhook_bridge import (
     OrderRequest,
-    OrderType,
-    InstrumentType,
     T212ExecutionLayer,
 )
 
 
 def example_direct_execution():
     """Example: Execute orders directly via the execution layer."""
-    execution = T212ExecutionLayer(
-        email="your_email@example.com",
-        password="your_password"
-    )
+    execution = T212ExecutionLayer()
 
     # Market buy order
     order = OrderRequest(
@@ -43,33 +38,20 @@ def example_direct_execution():
     result = execution.execute_order(limit_order)
     print(f"Limit sell result: {result}")
 
-    # Get current price
-    price = execution.get_current_price("AAPL", "equity")
-    print(f"AAPL current price: {price}")
-
-    execution.close()
-
 
 def example_cfd_order():
-    """Example: Execute a CFD order with stop loss and take profit."""
-    execution = T212ExecutionLayer(
-        email="your_email@example.com",
-        password="your_password"
-    )
+    """Example: Execute a CFD order."""
+    execution = T212ExecutionLayer()
 
     order = OrderRequest(
         symbol="AAPL",
         action="buy",
         order_type="market",
         quantity=10,
-        take_profit=160.00,
-        stop_loss=140.00,
         instrument_type="cfd"
     )
     result = execution.execute_order(order)
     print(f"CFD order result: {result}")
-
-    execution.close()
 
 
 if __name__ == "__main__":

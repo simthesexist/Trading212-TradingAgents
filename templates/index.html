@@ -438,152 +438,20 @@
             padding-right: 5px;
         }
 
-        /* AI Chat Panel */
-        .ai-chat-panel {
-            margin-top: 20px;
-            border-top: 1px solid rgba(255,255,255,0.1);
-            padding-top: 20px;
-        }
-        .ai-chat-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-        .ai-chat-header h3 {
-            color: #fff;
-            font-size: 14px;
-        }
-        .chat-messages {
-            background: rgba(0,0,0,0.3);
-            border-radius: 8px;
-            padding: 12px;
-            max-height: 400px;
-            min-height: 120px;
-            overflow-y: auto;
-            margin-bottom: 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        .chat-msg {
-            display: flex;
-            gap: 8px;
-            max-width: 85%;
-            animation: slideIn 0.25s ease;
-        }
-        .chat-msg.user {
-            align-self: flex-end;
-            flex-direction: row-reverse;
-        }
-        .chat-msg.ai {
-            align-self: flex-start;
-        }
-        .chat-msg .bubble {
-            padding: 10px 14px;
-            border-radius: 12px;
-            font-size: 13px;
-            line-height: 1.5;
-        }
-        .chat-msg.user .bubble {
-            background: #0d7377;
-            color: #fff;
-            border-bottom-right-radius: 4px;
-        }
-        .chat-msg.ai .bubble {
-            background: rgba(255,255,255,0.08);
-            color: #ddd;
-            border-bottom-left-radius: 4px;
-        }
-        .chat-msg .bubble .msg-symbol {
-            display: inline-block;
-            background: rgba(255,255,255,0.1);
-            padding: 1px 6px;
-            border-radius: 4px;
-            font-size: 11px;
-            margin-right: 4px;
-            color: #aaa;
-        }
-        .chat-msg .bubble .analysis-block {
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid rgba(255,255,255,0.1);
-        }
-        .chat-msg .bubble .analysis-block .decision {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: bold;
-            margin: 2px 0;
-        }
-        .chat-msg .bubble .analysis-block .decision.buy { background: rgba(34,197,94,0.25); color: #22c55e; }
-        .chat-msg .bubble .analysis-block .decision.sell { background: rgba(239,68,68,0.25); color: #ef4444; }
-        .chat-msg .bubble .analysis-block .decision.hold { background: rgba(250,204,21,0.25); color: #facc15; }
-        .chat-empty {
-            color: #555;
-            font-size: 12px;
-            text-align: center;
-            padding: 30px;
-            width: 100%;
-        }
-        .chat-input-area {
-            display: flex;
-            gap: 8px;
-        }
-        .chat-input-area input {
-            background: rgba(0,0,0,0.3);
-            border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 8px;
-            padding: 10px 14px;
-            color: #fff;
-            font-size: 13px;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-        .chat-input-area input:focus {
-            border-color: #0d7377;
-        }
-        .chat-input-area input::placeholder { color: #555; }
-        .chat-input-area input#chatInput {
-            flex: 1;
-        }
-        .chat-input-area input#symbolInput {
-            width: 100px;
-        }
-        .btn-send {
-            background: #0d7377;
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            padding: 10px 18px;
-            font-size: 13px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-send:hover { background: #14a3a8; }
-        .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-clear-chat {
-            background: transparent;
-            border: 1px solid rgba(255,255,255,0.15);
-            color: #888;
-            border-radius: 4px;
-            padding: 4px 10px;
-            cursor: pointer;
-            font-size: 12px;
-        }
-        .btn-clear-chat:hover { background: rgba(255,255,255,0.08); color: #fff; }
-        .chat-loading {
-            color: #555;
-            font-size: 11px;
-            padding: 5px 14px;
-        }
-    </style>
+            </style>
 </head>
 <body>
     <div class="container">
         <h1>T212 Trading Control</h1>
+
+        <div class="buttons">
+            <button id="btnDemo" class="btn btn-demo btn-active" onclick="switchMode('demo')">
+                Demo
+            </button>
+            <button id="btnLive" class="btn btn-live" onclick="confirmSwitch()">
+                Live
+            </button>
+        </div>
 
         <div class="mode-display">
             <span id="modeBadge" class="mode-badge demo">DEMO</span>
@@ -819,6 +687,27 @@
                 document.getElementById('balance').textContent = accountTotal.toFixed(2);
                 document.getElementById('currency').textContent = data.account.currency;
                 updateTradingBalance();
+            }
+        }
+
+        function switchMode(mode) {
+            fetch('/api/mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: mode })
+            }).then(res => res.json()).then(data => {
+                updateUI(data);
+                // Update button states
+                document.getElementById('btnDemo').classList.toggle('btn-active', mode === 'demo');
+                document.getElementById('btnLive').classList.toggle('btn-active', mode === 'live');
+            }).catch(() => {
+                alert('Failed to switch mode');
+            });
+        }
+
+        function confirmSwitch() {
+            if (confirm('WARNING: Switching to LIVE mode will use REAL MONEY.\n\nAre you sure you want to switch to LIVE trading?')) {
+                switchMode('live');
             }
         }
 

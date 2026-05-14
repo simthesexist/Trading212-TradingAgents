@@ -377,7 +377,7 @@ def emergency_sell_all():
                     logger.warning(f"EMERGENCY SELL executed: {pos.symbol} x {pos.quantity}")
                 except Exception as e:
                     logger.error(f"Emergency sell failed for {pos.symbol}: {e}")
-                    send_telegram_alert(f"❌ EMERGENCY SELL FAILED: {pos.symbol} — {e}")
+                    send_telegram_alert(f"EMERGENCY SELL FAILED: {pos.symbol} -- {e}")
         return jsonify({"status": "executed", "sold": sold})
     except Exception as e:
         logger.error(f"Emergency sell-all failed: {e}")

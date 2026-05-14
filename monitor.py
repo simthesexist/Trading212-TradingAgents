@@ -721,7 +721,7 @@ class StockMonitor:
             logger.info(
                 f"{symbol} news sentiment: {sentiment.sentiment} "
                 f"(confidence: {sentiment.confidence:.0%})"
-                + (f" ⚡ Stock mentioned in news — boosted confidence" if sentiment.stock_mentioned else "")
+                + (f" [Stock mentioned in news -- boosted confidence]" if sentiment.stock_mentioned else "")
             )
 
             # Check against news strategies

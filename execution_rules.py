@@ -272,11 +272,11 @@ class ExecutionRules:
             self._daily_trade_count += 1
             self._last_buy_time[symbol.upper()] = time.time()
             logger.info(f"BUY executed: {quantity} x {symbol}{pct_note}{fee_note}")
-            send_telegram_alert(f"🚀 BUY EXECUTED: {symbol} — {quantity} shares @ £{price:.2f}{fee_note}")
+            send_telegram_alert(f"BUY EXECUTED: {symbol} -- {quantity} shares @ £{price:.2f}{fee_note}")
             return {"status": "executed", "quantity": quantity, "price": price, "result": result}
         except Exception as e:
             logger.error(f"Buy execution failed for {symbol}: {e}")
-            send_telegram_alert(f"❌ BUY FAILED: {symbol} — {e}")
+            send_telegram_alert(f"BUY FAILED: {symbol} -- {e}")
             return {"status": "failed", "reason": str(e)}
 
     def execute_sell(self, symbol: str, position: Position, current_price: float, quantity: Optional[int] = None, alert=None) -> Dict[str, Any]:
@@ -301,7 +301,7 @@ class ExecutionRules:
             self._mark_tp1(symbol_key)
             self._tp1_highs[symbol_key] = current_price
             logger.info(f"TP1 HIT: Sold {qty}/{int(position.quantity)} of {symbol} at £{current_price:.2f}")
-            send_telegram_alert(f"📊 TP1: Sold 1/2 of {symbol} at £{current_price:.2f} — trailing SL active")
+            send_telegram_alert(f"TP1: Sold 1/2 of {symbol} at £{current_price:.2f} -- trailing SL active")
         else:
             qty = quantity or int(position.quantity)
             self._clear_tp1(symbol_key)
@@ -319,9 +319,9 @@ class ExecutionRules:
             )
             self._daily_trade_count += 1
             logger.info(f"SELL executed: {qty} x {symbol} — {reason}{fee_note}")
-            send_telegram_alert(f"🔴 SELL EXECUTED: {symbol} — {qty} shares @ £{current_price:.2f} ({reason}){fee_note}")
+            send_telegram_alert(f"SELL EXECUTED: {symbol} -- {qty} shares @ £{current_price:.2f} ({reason}){fee_note}")
             return {"status": "executed", "quantity": qty, "price": current_price, "reason": reason, "result": result}
         except Exception as e:
             logger.error(f"Sell execution failed for {symbol}: {e}")
-            send_telegram_alert(f"❌ SELL FAILED: {symbol} — {e}")
+            send_telegram_alert(f"SELL FAILED: {symbol} -- {e}")
             return {"status": "failed", "reason": str(e)}
