@@ -101,8 +101,16 @@ def post_mode_api():
     t212_client = T212Client()
     if HAS_WEBHOOK_BRIDGE:
         execution_layer = T212ExecutionLayer()
-    
+
     logger.info(f"t212_client base_url: {t212_client.base_url}")
+
+    # Restart monitor so it picks up the new T212 client
+    from monitor import get_monitor
+    m = get_monitor()
+    m.set_t212_client(t212_client)
+    if m.running:
+        m.stop()
+        m.start()
 
     account = get_account_info()
 

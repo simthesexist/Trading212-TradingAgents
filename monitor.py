@@ -157,6 +157,10 @@ class StockMonitor:
         self.auto_close_before_market_close = False
         self.t212_client = T212Client()
 
+    def set_t212_client(self, client):
+        """Set a new T212 client (used when switching demo/live mode)"""
+        self.t212_client = client
+
         if HAS_NEWS_SENTIMENT:
             try:
                 self.sentiment_analyzer = get_sentiment_analyzer()
