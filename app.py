@@ -455,6 +455,7 @@ def get_positions():
 
         return jsonify({
             "status": "success",
+            "mode": get_mode(),
             "positions": [p.to_dict() for p in summary.positions],
             "count": summary.position_count,
             "totalPnL": summary.total_pnl,
