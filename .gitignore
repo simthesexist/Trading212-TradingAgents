@@ -25,3 +25,13 @@ Thumbs.db
 .aionrs/
 .claude/
 .gemini/
+*.log
+data/
+
+# Wiki (local only)
+WIKI.md
+
+# Test/discovery scripts (local only)
+test_*.py
+verify_*.py
+examples.py

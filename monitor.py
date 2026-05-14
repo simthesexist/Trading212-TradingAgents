@@ -15,6 +15,7 @@ from strategies import STRATEGIES, STRATEGY_KEYS
 from polygon_client import YFinanceDataProvider, PolygonDataProvider
 from position_tracker import get_tracker
 from execution_rules import ExecutionRules
+from t212_client import T212Client
 
 # Try to import ZoneInfo (Python 3.9+)
 try:
@@ -49,10 +50,10 @@ def is_lse_market_open() -> bool:
             uk_tz = ZoneInfo("Europe/London")
             now_uk = datetime.now(uk_tz)
         else:
-            # Fallback if ZoneInfo not available
+            logger.warning("ZoneInfo not available — LSE market check using server local time (may be incorrect)")
             now_uk = datetime.now()
     except Exception:
-        # Fallback if ZoneInfo fails (e.g. missing tzdata)
+        logger.warning("ZoneInfo failed — LSE market check using server local time (may be incorrect)")
         now_uk = datetime.now() 
 
     # Weekend check (Saturday=5, Sunday=6)
@@ -152,6 +153,9 @@ class StockMonitor:
         self.sentiment_cache: Dict[str, SentimentResult] = {}
         self.news_cache: Dict[str, List[Dict]] = {}
         self.news_hashes: Dict[str, str] = {} # For change detection
+
+        self.auto_close_before_market_close = False
+        self.t212_client = T212Client()
 
         if HAS_NEWS_SENTIMENT:
             try:
@@ -449,13 +453,18 @@ class StockMonitor:
         """Check all watched stocks"""
         all_alerts = []
 
+        # Cache positions and balance once per cycle to reduce API calls
+        cached_positions = self.position_tracker.fetch_positions()
+        self.execution_rules.set_cached_positions(cached_positions)
+        cached_balance = self._get_balance()
+
         for symbol in self.watched_stocks:
             if self.update_stock_data(symbol):
                 status = self.watched_stocks[symbol]
                 current_price = status.price
 
                 # Check stop loss / take profit on open positions
-                sell_result = self.check_open_positions(symbol, current_price)
+                sell_result = self.check_open_positions(symbol, current_price, cached_positions=cached_positions)
                 if sell_result and sell_result.get("status") == "executed":
                     logger.info(f"SELL EXECUTED: {symbol} — position closed via SL/TP")
 
@@ -475,20 +484,19 @@ class StockMonitor:
                     from execution_rules import SELL_SIGNAL_STRATEGIES
                     if alert.strategy_key in SELL_SIGNAL_STRATEGIES:
                         tp2_result = self.check_open_positions(
-                            symbol, current_price, alert=alert
+                            symbol, current_price, alert=alert, cached_positions=cached_positions
                         )
                         if tp2_result and tp2_result.get("status") == "executed":
                             logger.info(f"TP2 EXIT: {symbol} via {alert.strategy_name}")
 
                     # Execute buy signals if strategy qualifies
                     if alert.strategy_key in BUY_SIGNAL_STRATEGIES:
-                        balance = self._get_balance()
                         can_buy, reason = self.execution_rules.check_buy(
-                            symbol, alert, balance, equity=balance
+                            symbol, alert, cached_balance, equity=cached_balance, current_price=current_price
                         )
                         if can_buy:
                             result = self.execution_rules.execute_buy(
-                                symbol, alert, balance, equity=balance
+                                symbol, alert, cached_balance, equity=cached_balance, current_price=current_price
                             )
                             if result.get("status") == "executed":
                                 logger.info(
@@ -498,16 +506,28 @@ class StockMonitor:
                         else:
                             logger.info(f"BUY BLOCKED: {symbol} — {reason}")
 
+        # Clear position cache to force fresh fetch next cycle
+        self.execution_rules.clear_position_cache()
+
         # Keep only recent alerts in memory
         self.alerts = [a for a in self.alerts[-50:] if
                       (datetime.now() - a.timestamp).total_seconds() < 3600]
 
         return all_alerts
 
-    def check_open_positions(self, symbol: str, current_price: float, alert=None) -> Optional[Dict]:
+    def check_open_positions(self, symbol: str, current_price: float, alert=None, cached_positions: List = None) -> Optional[Dict]:
         """Check open positions for stop loss / take profit triggers."""
         try:
-            position = self.position_tracker.get_position(symbol)
+            if cached_positions is not None:
+                position = None
+                for p in cached_positions:
+                    if p.symbol.upper() == symbol.upper():
+                        position = p
+                        break
+                if not position:
+                    return None
+            else:
+                position = self.position_tracker.get_position(symbol)
         except Exception:
             position = None
         if not position:
@@ -528,6 +548,49 @@ class StockMonitor:
             logger.warning(f"Could not fetch balance: {e}")
             return 0.0
 
+    def _should_auto_close(self) -> bool:
+        """Check if it's currently 16:40 UK time (within 1 minute window)."""
+        if not self.auto_close_before_market_close:
+            return False
+        try:
+            if ZoneInfo:
+                uk_tz = ZoneInfo("Europe/London")
+                now_uk = datetime.now(uk_tz)
+            else:
+                now_uk = datetime.now()
+            # Check if we're in the 16:25-16:26 window (within 1 minute of 16:25)
+            if now_uk.hour == 16 and now_uk.minute >= 25 and now_uk.minute <= 26:
+                # Only trigger once per day
+                today_key = now_uk.strftime("%Y-%m-%d")
+                if not getattr(self, '_auto_close_date_key', None) == today_key:
+                    self._auto_close_date_key = today_key
+                    return True
+        except Exception as e:
+            logger.warning(f"Auto-close check failed: {e}")
+        return False
+
+    def _do_auto_close(self):
+        """Sell all open positions at 16:40 UK time."""
+        logger.warning("AUTO-CLOSE: Selling all positions at 16:40 UK time")
+        try:
+            positions = self.position_tracker.fetch_positions()
+            for pos in positions:
+                if pos.quantity > 0:
+                    try:
+                        self.t212_client.place_order(
+                            instrument_code=pos.symbol,
+                            quantity=int(pos.quantity),
+                            order_type="market",
+                            side="sell"
+                        )
+                        send_telegram_alert(f"AUTO-CLOSE: Sold {pos.symbol} — {int(pos.quantity)} shares @ market")
+                        logger.warning(f"AUTO-CLOSE executed: {pos.symbol}")
+                    except Exception as e:
+                        logger.error(f"AUTO-CLOSE failed for {pos.symbol}: {e}")
+                        send_telegram_alert(f"AUTO-CLOSE FAILED: {pos.symbol} — {e}")
+        except Exception as e:
+            logger.error(f"AUTO-CLOSE error: {e}")
+
     def run(self):
         """Main monitoring loop"""
         logger.info(f"Stock monitor started (interval={self.poll_interval}s)")
@@ -535,6 +598,10 @@ class StockMonitor:
 
         while self.running:
             try:
+                # Auto-close check: sell all at 16:40 UK time
+                if self._should_auto_close():
+                    self._do_auto_close()
+
                 # Check if LSE market is open
                 if is_lse_market_open():
                     alerts = self.check_all_stocks()
@@ -609,7 +676,7 @@ class StockMonitor:
         cache_key = symbol
         if cache_key in self.news_cache:
             cached_time = self.news_cache.get(f"{cache_key}_time")
-            if cached_time and (datetime.now() - cached_time).seconds < 900:
+            if cached_time and (datetime.now() - cached_time).total_seconds() < 900:
                 return self.news_cache.get(cache_key, [])
 
         try:

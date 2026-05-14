@@ -35,14 +35,24 @@ class Position:
 
     @classmethod
     def from_t212(cls, raw: Dict) -> "Position":
+        # T212 portfolio returns: ticker, quantity, averagePrice, currentPrice, ppl, fxPpl, value, type
+        quantity = float(raw.get("quantity", 0))
+        avg_price = float(raw.get("averagePrice", 0))
+        current_price = float(raw.get("currentPrice", 0))
+        pnl = float(raw.get("ppl", 0))
+        exposure = raw.get("value", 0) or (quantity * current_price)
+        # Calculate pnl_percent if T212 doesn't provide it directly
+        percentage_pnl = float(raw.get("percentagePnl", 0) or raw.get("percentagePpl", 0))
+        if percentage_pnl == 0 and avg_price > 0 and quantity > 0:
+            percentage_pnl = (pnl / (avg_price * quantity)) * 100
         return cls(
-            symbol=raw.get("symbol", ""),
-            quantity=float(raw.get("quantity", 0)),
-            avg_price=float(raw.get("avgPrice", 0)),
-            current_price=float(raw.get("currentPrice", 0)),
-            pnl=float(raw.get("pnl", 0)),
-            pnl_percent=float(raw.get("pnlPercent", 0)),
-            exposure=float(raw.get("quantity", 0)) * float(raw.get("currentPrice", 0)),
+            symbol=raw.get("ticker", raw.get("symbol", "")),
+            quantity=quantity,
+            avg_price=avg_price,
+            current_price=current_price,
+            pnl=pnl,
+            pnl_percent=percentage_pnl,
+            exposure=float(exposure),
             instrument_type=raw.get("type", "EQUITY"),
         )
 

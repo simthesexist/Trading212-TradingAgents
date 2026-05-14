@@ -16,9 +16,6 @@ def get_t212_base_url():
     """Get base URL based on current T212_MODE (dynamic, not cached at import time)"""
     return T212_ENDPOINTS.get(T212_MODE, T212_ENDPOINTS["demo"])
 
-T212_BASE_URL = get_t212_base_url()
-
-# API Credentials (auto-select based on T212_MODE)
 def get_t212_credentials():
     """Get API credentials based on current T212_MODE"""
     if T212_MODE == "demo":
@@ -27,8 +24,6 @@ def get_t212_credentials():
         return os.getenv("T212_LIVE_API_KEY", ""), os.getenv("T212_LIVE_API_SECRET", "")
     else:
         raise ValueError(f"Invalid T212_MODE: {T212_MODE}. Must be 'demo' or 'live'.")
-
-T212_API_KEY, T212_API_SECRET = get_t212_credentials()
 
 # LLM Settings for TradingAgents
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
@@ -45,8 +40,8 @@ ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY", "")
 
 # Reminder flag
 if T212_MODE == "demo":
-    print("🔔 REMINDER: Using T212 DEMO API - Switch website to https://demo.trading212.com for testing")
-    print("🔔 REMINDER: No real money will be used")
+    print("REMINDER: Using T212 DEMO API - Switch website to https://demo.trading212.com for testing")
+    print("REMINDER: No real money will be used")
 else:
-    print("🚀 WARNING: Using T212 LIVE API - Switch website to https://app.trading212.com for production")
-    print("🚀 WARNING: REAL MONEY WILL BE AT RISK - Ensure you know what you're doing!")
+    print("WARNING: Using T212 LIVE API - Switch website to https://app.trading212.com for production")
+    print("WARNING: REAL MONEY WILL BE AT RISK - Ensure you know what you're doing!")

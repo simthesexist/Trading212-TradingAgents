@@ -35,6 +35,8 @@ SELL_SIGNAL_STRATEGIES = frozenset({
 
 
 class ExecutionRules:
+    _max_open_trades: int = 10  # class-level limit
+
     def __init__(self, position_tracker: PositionTracker, t212_client: Optional[T212Client] = None):
         self.pt = position_tracker
         self.t212 = t212_client or T212Client()
@@ -44,8 +46,21 @@ class ExecutionRules:
         self._tp1_highs: Dict[str, float] = {}  # highest price since TP1 triggered
         self._last_buy_time: Dict[str, float] = {}  # symbol -> timestamp of last buy
         self._day_start_equity: Optional[float] = None  # equity at start of trading day
+        self._cached_positions: Optional[List[Position]] = None  # cache to reduce API calls
+
+    @classmethod
+    def set_max_open_trades(cls, limit: int):
+        cls._max_open_trades = max(1, limit)
+
+    def set_cached_positions(self, positions: List[Position]):
+        self._cached_positions = positions
+
+    def clear_position_cache(self):
+        self._cached_positions = None
 
     def _get_open_positions(self) -> List[Position]:
+        if self._cached_positions is not None:
+            return self._cached_positions
         try:
             return self.pt.fetch_positions()
         except Exception as e:
@@ -93,7 +108,7 @@ class ExecutionRules:
             self._daily_trade_date = today
             self._day_start_equity = equity
 
-    def check_buy(self, symbol: str, alert: "Alert", balance: float, equity: float = None) -> Tuple[bool, str]:
+    def check_buy(self, symbol: str, alert: "Alert", balance: float, equity: float = None, current_price: float = None) -> Tuple[bool, str]:
         """
         Validate whether a buy order should be executed.
 
@@ -137,6 +152,10 @@ class ExecutionRules:
         if not is_lse_market_open():
             return False, "LSE market is closed"
 
+        open_count = len(self._get_open_positions())
+        if open_count >= self._max_open_trades:
+            return False, f"Max open trades ({self._max_open_trades}) reached"
+
         if self._daily_trade_count >= MAX_DAILY_TRADES:
             return False, f"Daily trade limit ({MAX_DAILY_TRADES}) reached"
 
@@ -149,11 +168,11 @@ class ExecutionRules:
             reason_suffix = ""
 
         max_position_value = balance * effective_max_pct / 100
-        price = getattr(alert, 'indicator_value', None) or 0
+        price = current_price or getattr(alert, 'indicator_value', None) or 0
         if price <= 0:
             return False, f"Cannot determine price for {symbol}"
 
-        if price * 1 > max_position_value:
+        if price > max_position_value:
             return False, f"Position too large{reason_suffix} — £{price:.2f} > £{max_position_value:.2f}"
 
         return True, f"All buy checks passed{reason_suffix}"
@@ -217,15 +236,15 @@ class ExecutionRules:
             return 0
         return int((balance * max_pct / 100) / price)
 
-    def execute_buy(self, symbol: str, alert, balance: float, equity: float = None, quantity: Optional[int] = None) -> Dict[str, Any]:
+    def execute_buy(self, symbol: str, alert, balance: float, equity: float = None, quantity: Optional[int] = None, current_price: float = None) -> Dict[str, Any]:
         """Check rules and execute buy if all pass."""
-        can_buy, reason = self.check_buy(symbol, alert, balance, equity)
+        can_buy, reason = self.check_buy(symbol, alert, balance, equity, current_price=current_price)
         if not can_buy:
             logger.info(f"Buy blocked for {symbol}: {reason}")
             send_telegram_alert(f"🛡 BUY BLOCKED: {symbol} — {reason}")
             return {"status": "blocked", "reason": reason}
 
-        price = getattr(alert, 'indicator_value', None) or 0.0
+        price = current_price or getattr(alert, 'indicator_value', None) or 0.0
         if price <= 0:
             try:
                 price = self.pt._get_current_price(symbol)  # fallback to ticker price

@@ -190,6 +190,20 @@
         .pnl-summary strong { margin-left: 4px; }
         .pnl-summary .pnl-positive { color: #22c55e; }
         .pnl-summary .pnl-negative { color: #ef4444; }
+        #emergencyStopBtn {
+            background: #dc2626;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+            margin-top: 8px;
+            font-size: 13px;
+        }
+        #emergencyStopBtn:hover { background: #b91c1c; }
+        #emergencyStopBtn:disabled { background: #555; cursor: not-allowed; }
         .account-info .bank-row {
             display: flex;
             align-items: center;
@@ -423,6 +437,148 @@
             overflow-y: auto;
             padding-right: 5px;
         }
+
+        /* AI Chat Panel */
+        .ai-chat-panel {
+            margin-top: 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding-top: 20px;
+        }
+        .ai-chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .ai-chat-header h3 {
+            color: #fff;
+            font-size: 14px;
+        }
+        .chat-messages {
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 12px;
+            max-height: 400px;
+            min-height: 120px;
+            overflow-y: auto;
+            margin-bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .chat-msg {
+            display: flex;
+            gap: 8px;
+            max-width: 85%;
+            animation: slideIn 0.25s ease;
+        }
+        .chat-msg.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+        .chat-msg.ai {
+            align-self: flex-start;
+        }
+        .chat-msg .bubble {
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .chat-msg.user .bubble {
+            background: #0d7377;
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+        .chat-msg.ai .bubble {
+            background: rgba(255,255,255,0.08);
+            color: #ddd;
+            border-bottom-left-radius: 4px;
+        }
+        .chat-msg .bubble .msg-symbol {
+            display: inline-block;
+            background: rgba(255,255,255,0.1);
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-right: 4px;
+            color: #aaa;
+        }
+        .chat-msg .bubble .analysis-block {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        .chat-msg .bubble .analysis-block .decision {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            margin: 2px 0;
+        }
+        .chat-msg .bubble .analysis-block .decision.buy { background: rgba(34,197,94,0.25); color: #22c55e; }
+        .chat-msg .bubble .analysis-block .decision.sell { background: rgba(239,68,68,0.25); color: #ef4444; }
+        .chat-msg .bubble .analysis-block .decision.hold { background: rgba(250,204,21,0.25); color: #facc15; }
+        .chat-empty {
+            color: #555;
+            font-size: 12px;
+            text-align: center;
+            padding: 30px;
+            width: 100%;
+        }
+        .chat-input-area {
+            display: flex;
+            gap: 8px;
+        }
+        .chat-input-area input {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .chat-input-area input:focus {
+            border-color: #0d7377;
+        }
+        .chat-input-area input::placeholder { color: #555; }
+        .chat-input-area input#chatInput {
+            flex: 1;
+        }
+        .chat-input-area input#symbolInput {
+            width: 100px;
+        }
+        .btn-send {
+            background: #0d7377;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 18px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-send:hover { background: #14a3a8; }
+        .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-clear-chat {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.15);
+            color: #888;
+            border-radius: 4px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .btn-clear-chat:hover { background: rgba(255,255,255,0.08); color: #fff; }
+        .chat-loading {
+            color: #555;
+            font-size: 11px;
+            padding: 5px 14px;
+        }
     </style>
 </head>
 <body>
@@ -439,15 +595,6 @@
 
         <div id="warningBox" class="warning hidden">
             LIVE MODE — REAL MONEY AT RISK!
-        </div>
-
-        <div class="buttons">
-            <button id="btnDemo" class="btn btn-demo btn-active" onclick="switchMode('demo')">
-                Demo
-            </button>
-            <button id="btnLive" class="btn btn-live" onclick="confirmSwitch()">
-                Live
-            </button>
         </div>
 
         <!-- Market Status -->
@@ -478,6 +625,12 @@
                 <span class="bank-label">Set aside Bank:</span>
                 <span>£</span>
                 <input type="number" id="bankAmount" class="bank-input" placeholder="0" value="0" min="0" step="100" onchange="updateTradingBalance()">
+                <span class="bank-label" style="margin-left:16px;">Max Open Trades:</span>
+                <input type="number" id="maxOpenTrades" class="bank-input" placeholder="10" value="10" min="1" max="50" style="width:60px;" onchange="updateMaxOpenTrades()">
+                <label style="margin-left:16px;display:flex;align-items:center;gap:6px;font-size:12px;color:#888;">
+                    <input type="checkbox" id="autoCloseCheckbox" onchange="updateAutoClose()">
+                    Auto-close 20min before market close
+                </label>
             </div>
 
             <!-- Open Trades Panel -->
@@ -491,15 +644,13 @@
                         <thead>
                             <tr>
                                 <th>Stock</th>
-                                <th>Volume</th>
-                                <th>Avg Price</th>
-                                <th>Current</th>
+                                <th>Value</th>
                                 <th>P&L £</th>
                                 <th>P&L %</th>
                             </tr>
                         </thead>
                         <tbody id="openTradesBody">
-                            <tr><td colspan="6" class="no-trades">No open trades</td></tr>
+                            <tr><td colspan="4" class="no-trades">No open trades</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -509,10 +660,14 @@
                     <span>Unrealized: <strong id="unrealizedPnL">£0</strong></span>
                 </div>
                 <div class="pnl-summary">
+                    <span>Daily P&L: <strong id="dailyPnL">£0</strong></span>
                     <span>Monthly P&L: <strong id="monthlyPnL">£0</strong></span>
                     <span>Yearly P&L: <strong id="yearlyPnL">£0</strong></span>
                     <span>All-Time P&L: <strong id="allTimePnL">£0</strong></span>
                 </div>
+                <button id="emergencyStopBtn" onclick="emergencyStop()">
+                    EMERGENCY STOP -- SELL ALL AND STOP TRADING
+                </button>
             </div>
         </div>
 
@@ -530,19 +685,7 @@
         <div id="status" class="status">Loading...</div>
     </div>
 
-    <div id="confirmModal" class="confirm-modal">
-        <div class="confirm-box">
-            <h2>⚠️ Switch to LIVE Mode?</h2>
-            <p>You are about to switch to LIVE trading. Real money will be at risk!</p>
-            <div class="confirm-buttons">
-                <button class="btn btn-cancel" onclick="closeConfirm()">Cancel</button>
-                <button class="btn btn-live" onclick="confirmLive()">Switch to Live</button>
-            </div>
-        </div>
-    </div>
-
     <script>
-        let currentMode = 'demo';
         let bankAmount = parseInt(localStorage.getItem('bankAmount')) || 0;
         let accountTotal = 0;
 
@@ -572,19 +715,18 @@
                 const positions = data.positions || [];
 
                 if (positions.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="no-trades">No open trades</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="4" class="no-trades">No open trades</td></tr>';
                 } else {
                     tbody.innerHTML = positions.map(p => {
                         const pnl = p.pnl || 0;
                         const pnlPct = p.pnl_percent || 0;
+                        const qty = p.quantity || 0;
                         const price = p.current_price || p.currentPrice || 0;
-                        const avg = p.avg_price || p.avgPrice || 0;
+                        const value = qty * price;
                         const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
                         return `<tr>
                             <td>${p.symbol || '—'}</td>
-                            <td>${p.quantity || 0}</td>
-                            <td>£${avg.toFixed(2)}</td>
-                            <td>£${price.toFixed(2)}</td>
+                            <td>£${value.toFixed(2)}</td>
                             <td class="${pnlClass}">£${pnl.toFixed(2)}</td>
                             <td class="${pnlClass}">${pnlPct.toFixed(1)}%</td>
                         </tr>`;
@@ -594,6 +736,12 @@
                 document.getElementById('openPositionsCount').textContent = positions.length;
                 document.getElementById('todayTradesCount').textContent = data.todayCount || 0;
                 document.getElementById('unrealizedPnL').textContent = `£${(data.totalPnL || 0).toFixed(2)}`;
+
+                // Daily P&L
+                const daily = data.dailyPnL || 0;
+                const dElem = document.getElementById('dailyPnL');
+                dElem.textContent = `£${daily.toFixed(2)}`;
+                dElem.className = daily >= 0 ? 'pnl-positive' : 'pnl-negative';
 
                 // Monthly/Yearly/All-Time P&L
                 const monthly = data.monthlyPnL || 0;
@@ -654,8 +802,6 @@
             const badge = document.getElementById('modeBadge');
             const warning = document.getElementById('warningBox');
             const endpoint = document.getElementById('endpointInfo');
-            const btnDemo = document.getElementById('btnDemo');
-            const btnLive = document.getElementById('btnLive');
 
             badge.textContent = data.mode.toUpperCase();
             badge.className = 'mode-badge ' + data.mode;
@@ -663,13 +809,9 @@
             if (data.mode === 'demo') {
                 warning.classList.add('hidden');
                 endpoint.textContent = 'Endpoint: https://demo.trading212.com/api/v0';
-                btnDemo.classList.add('btn-active');
-                btnLive.classList.remove('btn-active');
             } else {
                 warning.classList.remove('hidden');
                 endpoint.textContent = 'Endpoint: https://live.trading212.com/api/v0';
-                btnDemo.classList.remove('btn-active');
-                btnLive.classList.add('btn-active');
             }
 
             if (data.account) {
@@ -678,36 +820,6 @@
                 document.getElementById('currency').textContent = data.account.currency;
                 updateTradingBalance();
             }
-
-            document.getElementById('status').textContent = 'Connected — ' + new Date().toLocaleTimeString();
-        }
-
-        async function switchMode(mode) {
-            try {
-                const res = await fetch('/api/mode', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode })
-                });
-                const data = await res.json();
-                updateUI(data);
-            } catch (e) {
-                document.getElementById('status').textContent = 'Error switching mode';
-            }
-        }
-
-        function confirmSwitch() {
-            if (currentMode === 'live') return;
-            document.getElementById('confirmModal').classList.add('show');
-        }
-
-        function closeConfirm() {
-            document.getElementById('confirmModal').classList.remove('show');
-        }
-
-        function confirmLive() {
-            closeConfirm();
-            switchMode('live');
         }
 
         // Autonomous Agent Reasoning Stream
@@ -755,7 +867,7 @@
 
             div.innerHTML = `
                 <span class="msg-time">${time}</span>
-                <span class="msg-icon">${data.emoji || '🤖'}</span>
+                <span class="msg-icon">${data.emoji || '[AI]'}</span>
                 <div class="msg-body">
                     <div class="msg-agent">${data.name || data.agent || 'Agent'}</div>
                     <div class="msg-text">${data.message || ''}${badge}</div>
@@ -837,6 +949,7 @@
             loadStatus();
             loadBankAmount();
             loadOpenTrades();
+            loadSettings();
             // Don't start chat immediately - let checkMarketStatus decide
         });
 
@@ -880,6 +993,70 @@
         // Check market every minute
         setInterval(checkMarketStatus, 60000);
         setInterval(loadStatus, 10000);
+
+        // Also refresh open trades every 30 seconds
+        setInterval(loadOpenTrades, 30000);
+
+        // --- Max Open Trades & Auto-Close ---
+        let maxOpenTrades = parseInt(localStorage.getItem('maxOpenTrades')) || 10;
+        let autoCloseEnabled = localStorage.getItem('autoCloseEnabled') === 'true';
+
+        function updateMaxOpenTrades() {
+            maxOpenTrades = parseInt(document.getElementById('maxOpenTrades').value) || 10;
+            localStorage.setItem('maxOpenTrades', maxOpenTrades);
+            fetch('/api/settings/max-trades', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ max_open_trades: maxOpenTrades })
+            }).catch(() => {});
+        }
+
+        function updateAutoClose() {
+            autoCloseEnabled = document.getElementById('autoCloseCheckbox').checked;
+            localStorage.setItem('autoCloseEnabled', autoCloseEnabled);
+            fetch('/api/settings/auto-close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ auto_close: autoCloseEnabled })
+            }).catch(() => {});
+        }
+
+        function loadSettings() {
+            document.getElementById('maxOpenTrades').value = maxOpenTrades;
+            document.getElementById('autoCloseCheckbox').checked = autoCloseEnabled;
+        }
+
+        // --- Real-time clock ---
+        function updateClock() {
+            const statusEl = document.getElementById('status');
+            const parts = statusEl.textContent.split(' — ');
+            if (parts.length >= 2) {
+                statusEl.textContent = parts[0] + ' — ' + new Date().toLocaleTimeString('en-GB', { hour12: false });
+            } else {
+                statusEl.textContent = 'Connected — ' + new Date().toLocaleTimeString('en-GB', { hour12: false });
+            }
+        }
+        setInterval(updateClock, 1000);
+
+        async function emergencyStop() {
+            if (!confirm('WARNING: EMERGENCY STOP\n\nThis will SELL ALL positions at market price and STOP all trading.\n\nAre you sure?')) return;
+            try {
+                const response = await fetch('/api/emergency/sell-all', {method: 'POST'});
+                const result = await response.json();
+                let msg = 'EMERGENCY SELL RESULTS:\n';
+                if (result.sold && result.sold.length > 0) {
+                    result.sold.forEach(s => msg += `  ${s.symbol}: ${s.qty} shares @ ${s.price}\n`);
+                } else {
+                    msg += '  No positions to sell\n';
+                }
+                await fetch('/api/emergency/stop-trading', {method: 'POST'});
+                document.getElementById('emergencyStopBtn').disabled = true;
+                document.getElementById('emergencyStopBtn').textContent = 'TRADING STOPPED';
+                alert('TRADING STOPPED: ' + msg + '\nTrading has been stopped.');
+            } catch (e) {
+                alert('Emergency stop failed: ' + e);
+            }
+        }
     </script>
 </body>
 </html>

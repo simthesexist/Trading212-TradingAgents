@@ -46,7 +46,8 @@ def get_mode():
 def init_t212_client():
     global t212_client, execution_layer
     t212_client = T212Client()
-    execution_layer = T212ExecutionLayer()
+    if HAS_WEBHOOK_BRIDGE:
+        execution_layer = T212ExecutionLayer()
     return t212_client
 
 def get_account_info():
@@ -98,7 +99,8 @@ def post_mode_api():
     # Reinitialize T212 client and execution layer with new mode
     os.environ["T212_MODE"] = new_mode
     t212_client = T212Client()
-    execution_layer = T212ExecutionLayer()
+    if HAS_WEBHOOK_BRIDGE:
+        execution_layer = T212ExecutionLayer()
     
     logger.info(f"t212_client base_url: {t212_client.base_url}")
 
@@ -350,6 +352,51 @@ def monitor_stop():
         logger.info("Monitor stopped via API")
     return jsonify({"status": "stopped", "running": monitor.running})
 
+@app.route('/api/emergency/sell-all', methods=['POST'])
+def emergency_sell_all():
+    """Emergency: sell ALL open positions at market price immediately."""
+    from t212_client import T212Client
+    from position_tracker import get_tracker
+    try:
+        tracker = get_tracker()
+        client = T212Client()
+        positions = tracker.fetch_positions()
+        sold = []
+        for pos in positions:
+            if pos.quantity > 0:
+                try:
+                    result = client.place_order(
+                        instrument_code=pos.symbol,
+                        quantity=int(pos.quantity),
+                        order_type="market",
+                        side="sell"
+                    )
+                    from telegram_alerts import send_telegram_alert
+                    send_telegram_alert(f"EMERGENCY SELL: {pos.symbol} — {int(pos.quantity)} shares @ market")
+                    sold.append({"symbol": pos.symbol, "qty": int(pos.quantity), "price": "market"})
+                    logger.warning(f"EMERGENCY SELL executed: {pos.symbol} x {pos.quantity}")
+                except Exception as e:
+                    logger.error(f"Emergency sell failed for {pos.symbol}: {e}")
+                    send_telegram_alert(f"❌ EMERGENCY SELL FAILED: {pos.symbol} — {e}")
+        return jsonify({"status": "executed", "sold": sold})
+    except Exception as e:
+        logger.error(f"Emergency sell-all failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/emergency/stop-trading', methods=['POST'])
+def emergency_stop_trading():
+    """Stop the monitor loop and block all trading."""
+    from telegram_alerts import send_telegram_alert
+    try:
+        monitor = get_monitor()
+        if monitor.running:
+            monitor.stop()
+        send_telegram_alert("🛑 TRADING STOPPED — Emergency stop triggered by user")
+        return jsonify({"status": "stopped", "message": "Monitor stopped"})
+    except Exception as e:
+        logger.error(f"Emergency stop failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/monitor/check', methods=['POST'])
 def monitor_check():
     """Trigger immediate check of all stocks"""
@@ -416,6 +463,33 @@ def get_position_changes():
         return jsonify({"status": "success", **tracker.detect_changes()})
     except Exception as e:
         logger.error(f"Failed to detect changes: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/settings/max-trades', methods=['POST'])
+def set_max_trades():
+    """Set max open trades limit"""
+    try:
+        data = request.json
+        max_trades = int(data.get('max_open_trades', 10))
+        from execution_rules import ExecutionRules
+        ExecutionRules.set_max_open_trades(max_trades)
+        return jsonify({"status": "success", "max_open_trades": max_trades})
+    except Exception as e:
+        logger.error(f"Failed to set max trades: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/settings/auto-close', methods=['POST'])
+def set_auto_close():
+    """Enable/disable auto-close before market close"""
+    try:
+        data = request.json
+        enabled = bool(data.get('auto_close', False))
+        from monitor import get_monitor
+        monitor = get_monitor()
+        monitor.auto_close_before_market_close = enabled
+        return jsonify({"status": "success", "auto_close": enabled})
+    except Exception as e:
+        logger.error(f"Failed to set auto-close: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/orders', methods=['GET'])
@@ -485,13 +559,13 @@ if __name__ == '__main__':
 
     # Log mode reminder
     if get_mode() == "demo":
-        print("\n" + "="*60)
-        print("🔔 T212 DEMO MODE ACTIVE")
+        print("="*60)
+        print("T212 DEMO MODE ACTIVE")
         print("="*60 + "\n")
     else:
         print("\n" + "="*60)
-        print("🚨 T212 LIVE MODE ACTIVE")
-        print("🚨 REAL MONEY IS AT RISK!")
+        print("T212 LIVE MODE ACTIVE")
+        print("REAL MONEY IS AT RISK!")
         print("="*60 + "\n")
 
     app.run(host='0.0.0.0', port=5000, debug=False)
