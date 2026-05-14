@@ -14,6 +14,7 @@ from t212_client import T212Client
 
 logger = logging.getLogger(__name__)
 
+TRADE_FEE = 1.0
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 HISTORY_FILE = os.path.join(DATA_DIR, "position_history.json")
 SNAPSHOT_FILE = os.path.join(DATA_DIR, "position_snapshots.json")
@@ -61,6 +62,8 @@ class PositionSnapshot:
 @dataclass
 class PortfolioSummary:
     total_pnl: float = 0.0
+    total_fees: float = 0.0
+    net_pnl: float = 0.0
     total_exposure: float = 0.0
     position_count: int = 0
     daily_pnl: float = 0.0
@@ -77,6 +80,7 @@ class PositionTracker:
         self.client = t212_client or T212Client()
         self._snapshots: List[PositionSnapshot] = []
         self._last_positions: List[Position] = []
+        self._total_fees: float = 0.0
         self._load_history()
 
     def _load_history(self):
@@ -116,6 +120,9 @@ class PositionTracker:
                 json.dump(entries, f, indent=2)
         except Exception as e:
             logger.warning(f"Could not save position snapshot: {e}")
+
+    def add_trade_fee(self, count: int = 1):
+        self._total_fees += TRADE_FEE * count
 
     def fetch_positions(self) -> List[Position]:
         try:
@@ -157,15 +164,20 @@ class PositionTracker:
 
         pnl_by_period = self._calculate_pnl_by_period(today_start, week_start, month_start, year_start)
 
+        net_total_pnl = current_total_pnl - self._total_fees
+        net_all_time = pnl_by_period.get("all_time", current_total_pnl) - self._total_fees
+
         return PortfolioSummary(
             total_pnl=current_total_pnl,
+            total_fees=self._total_fees,
+            net_pnl=net_total_pnl,
             total_exposure=total_exposure,
             position_count=len(positions),
             daily_pnl=pnl_by_period.get("daily", current_total_pnl),
             weekly_pnl=pnl_by_period.get("weekly", current_total_pnl),
             monthly_pnl=pnl_by_period.get("monthly", current_total_pnl),
             yearly_pnl=pnl_by_period.get("yearly", current_total_pnl),
-            all_time_pnl=pnl_by_period.get("all_time", current_total_pnl),
+            all_time_pnl=net_all_time,
             today_count=self._count_today_trades(today_start),
             positions=positions,
         )

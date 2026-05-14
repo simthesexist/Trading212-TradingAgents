@@ -382,6 +382,8 @@ def get_positions():
             "positions": [p.to_dict() for p in summary.positions],
             "count": summary.position_count,
             "totalPnL": summary.total_pnl,
+            "totalFees": summary.total_fees,
+            "netPnL": summary.net_pnl,
             "totalExposure": summary.total_exposure,
             "todayCount": summary.today_count,
             "dailyPnL": summary.daily_pnl,

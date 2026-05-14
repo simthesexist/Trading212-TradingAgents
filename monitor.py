@@ -484,11 +484,11 @@ class StockMonitor:
                     if alert.strategy_key in BUY_SIGNAL_STRATEGIES:
                         balance = self._get_balance()
                         can_buy, reason = self.execution_rules.check_buy(
-                            symbol, alert, balance
+                            symbol, alert, balance, equity=balance
                         )
                         if can_buy:
                             result = self.execution_rules.execute_buy(
-                                symbol, alert, balance
+                                symbol, alert, balance, equity=balance
                             )
                             if result.get("status") == "executed":
                                 logger.info(
@@ -520,7 +520,7 @@ class StockMonitor:
         return None
 
     def _get_balance(self) -> float:
-        """Get current account balance."""
+        """Get current account balance (total equity)."""
         try:
             account = self.position_tracker.client.get_account_summary()
             return float(account.get("totalValue", account.get("equity", 0)))
