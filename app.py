@@ -3,14 +3,21 @@ import logging
 import os
 import threading
 import time
-from dataclasses import asdict
 from t212_client import T212Client
 import config
 from tradingagents_integration import TradingAgentsIntegration
-from flask_webhook_bridge import OrderRequest, T212ExecutionLayer
 from monitor import get_monitor
+
+try:
+    from flask_webhook_bridge import OrderRequest, T212ExecutionLayer
+    HAS_WEBHOOK_BRIDGE = True
+except ImportError:
+    HAS_WEBHOOK_BRIDGE = False
+    OrderRequest = None
+    T212ExecutionLayer = None
 from watchlist import LSE_WATCHLIST
 from strategies import STRATEGIES
+from position_tracker import get_tracker
 
 try:
     from news_sentiment import get_sentiment_analyzer
@@ -27,7 +34,7 @@ app = Flask(__name__)
 # Global runtime mode (overrides config.T212_MODE)
 RUNTIME_MODE = None
 
-# Global T212 client instance
+# Global instances
 t212_client = None
 execution_layer = None
 tradingagents = TradingAgentsIntegration()
@@ -73,7 +80,7 @@ def get_mode_api():
 @app.route('/api/mode', methods=['POST'])
 def post_mode_api():
     """Switch between demo and live mode"""
-    global RUNTIME_MODE, t212_client
+    global RUNTIME_MODE, t212_client, execution_layer
 
     data = request.json
     new_mode = data.get('mode', '').lower()
@@ -88,11 +95,11 @@ def post_mode_api():
     RUNTIME_MODE = new_mode
     logger.info(f"MODE SWITCH: {old_mode} -> {new_mode}")
 
-    # Reinitialize T212 client with new mode
+    # Reinitialize T212 client and execution layer with new mode
     os.environ["T212_MODE"] = new_mode
-    logger.info(f"T212_MODE set to: {config.T212_MODE}")
-    logger.info(f"Live API key present: {bool(os.getenv('T212_LIVE_API_KEY'))}")
     t212_client = T212Client()
+    execution_layer = T212ExecutionLayer()
+    
     logger.info(f"t212_client base_url: {t212_client.base_url}")
 
     account = get_account_info()
@@ -138,14 +145,6 @@ def handle_webhook():
 def webhook_tradingview():
     """
     TradingView webhook with TradingAgents analysis.
-
-    Payload:
-    {
-        "symbol": "HSBA.L",
-        "action": "buy",        # Optional - TradingView signal
-        "price": 685.50,
-        "quantity": 10          # Optional - defaults to 1
-    }
     """
     try:
         data = request.get_json()
@@ -156,13 +155,15 @@ def webhook_tradingview():
         decision, confidence, details = tradingagents.analyze_and_decide(symbol)
 
         logger.info(f"Analysis result: {decision} (confidence: {confidence})")
-        logger.info(f"Details: {details}")
 
         # Check if should execute
         should_exec, reason = tradingagents.should_execute(decision, confidence)
 
         if should_exec:
             # Execute via T212
+            if execution_layer is None:
+                init_t212_client()
+                
             logger.info(f"Executing {decision} for {symbol} via T212")
             order_result = execution_layer.execute_order(OrderRequest(
                 symbol=symbol,
@@ -176,7 +177,7 @@ def webhook_tradingview():
                 "symbol": symbol,
                 "decision": decision,
                 "confidence": confidence,
-                "order_result": asdict(order_result),
+                "order_result": order_result,
                 "mode": get_mode()
             })
         else:
@@ -218,8 +219,6 @@ def analyze_symbol(symbol: str):
 def chat_with_ai():
     """
     Chat with the AI about trading analysis.
-    Expects: { "message": "...", "symbol": "HSBA.L" (optional) }
-    Returns: { "response": "...", "analysis": {...} }
     """
     try:
         data = request.json
@@ -254,13 +253,10 @@ def chat_with_ai():
                     response += f"This signal would {'automatically execute' if tradingagents.auto_execute else 'be queued for manual review'}. "
                 else:
                     response += f"However, it won't execute because: {analysis['reason']}. "
-            response += f"\n\nAdditional context from my analysis: {str(analysis.get('details', {}))[:500]}"
         else:
             response = (
                 "I'm your trading assistant. I can help you analyze stocks, "
                 "explain trading signals, and discuss market trends. "
-                "Just ask me about a specific symbol (e.g., 'analyze HSBA.L') "
-                "or ask a general trading question."
             )
 
         return jsonify({
@@ -277,7 +273,6 @@ def chat_stream_reasoning():
     """
     Stream agent reasoning continuously for a symbol.
     Uses SSE (Server-Sent Events) to stream intermediate steps forever.
-    Expects: ?symbol=HSBA.L
     """
     from flask import Response
     import json
@@ -292,18 +287,19 @@ def chat_stream_reasoning():
 
         def generate():
             last_keepalive = time.time()
-            for step in tradingagents.stream_reasoning(symbol):
-                # Format timestamp
-                step['time'] = time.strftime('%H:%M:%S', time.localtime(step['timestamp']))
-
-                # Send as SSE
-                yield f"data: {json.dumps(step)}\n\n"
-
-                # Send keepalive comment every ~15s to prevent connection timeout
-                now = time.time()
-                if now - last_keepalive > 15:
-                    yield ": keepalive\n\n"
-                    last_keepalive = now
+            try:
+                for step in tradingagents.stream_reasoning(symbol):
+                    # Format timestamp
+                    step['time'] = time.strftime('%H:%M:%S', time.localtime(step['timestamp']))
+                    # Send as SSE
+                    yield f"data: {json.dumps(step)}\n\n"
+                    # Send keepalive comment every ~15s
+                    now = time.time()
+                    if now - last_keepalive > 15:
+                        yield ": keepalive\n\n"
+                        last_keepalive = now
+            except GeneratorExit:
+                logger.info(f"Stream client disconnected for {symbol}")
 
         return Response(
             generate(),
@@ -324,13 +320,8 @@ def health():
     return jsonify({
         "status": "healthy",
         "mode": get_mode(),
-        "t212_configured": bool(config.T212_API_KEY and config.T212_API_SECRET)
+        "t212_configured": bool(config.get_t212_credentials()[0])
     })
-
-def run_tradingagents_analysis(symbol: str):
-    """Run TradingAgents analysis (placeholder for integration)"""
-    logger.info(f"Running TradingAgents analysis for {symbol}")
-    pass
 
 @app.route('/monitor', methods=['GET'])
 def monitor_status():
@@ -381,67 +372,48 @@ def monitor_check():
 
 @app.route('/api/positions', methods=['GET'])
 def get_positions():
-    """Get open positions and PnL summary from T212"""
-    global t212_client
+    """Get open positions and PnL summary from position tracker"""
     try:
-        if t212_client is None:
-            init_t212_client()
-
-        positions = t212_client.get_positions()
-        orders = t212_client.get_order_history()
-
-        # Calculate PnL from order history
-        monthly_pnl = 0.0
-        yearly_pnl = 0.0
-        alltime_pnl = 0.0
-        today_count = 0
-
-        from datetime import datetime, timedelta
-        now = datetime.now()
-        month_start = datetime(now.year, now.month, 1)
-        year_start = datetime(now.year, 1, 1)
-
-        for order in orders:
-            try:
-                filled = order.get('filledQuantity', 0)
-                avg_price = order.get('filledAvgPrice', 0)
-                current_price = order.get('currentPrice', avg_price)
-                side = order.get('side', '').lower()
-
-                pnl_per_share = (current_price - avg_price) * filled
-                if side == 'sell':
-                    pnl_per_share = -pnl_per_share
-
-                alltime_pnl += pnl_per_share
-
-                # Parse order time
-                order_time_str = order.get('time', '')
-                if order_time_str:
-                    order_time = datetime.fromisoformat(order_time_str.replace('Z', '+00:00'))
-                    if order_time >= month_start:
-                        monthly_pnl += pnl_per_share
-                    if order_time >= year_start:
-                        yearly_pnl += pnl_per_share
-
-                # Today count
-                today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                if order_time >= today_start:
-                    today_count += 1
-            except Exception:
-                continue
+        tracker = get_tracker()
+        summary = tracker.get_summary()
 
         return jsonify({
             "status": "success",
-            "positions": positions,
-            "count": len(positions),
-            "todayCount": today_count,
-            "totalPnL": sum(p.get('pnl', 0) for p in positions),
-            "monthlyPnL": monthly_pnl,
-            "yearlyPnL": yearly_pnl,
-            "allTimePnL": alltime_pnl
+            "positions": [p.to_dict() for p in summary.positions],
+            "count": summary.position_count,
+            "totalPnL": summary.total_pnl,
+            "totalExposure": summary.total_exposure,
+            "todayCount": summary.today_count,
+            "dailyPnL": summary.daily_pnl,
+            "weeklyPnL": summary.weekly_pnl,
+            "monthlyPnL": summary.monthly_pnl,
+            "yearlyPnL": summary.yearly_pnl,
+            "allTimePnL": summary.all_time_pnl,
         })
     except Exception as e:
         logger.error(f"Failed to get positions: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/positions/diversification', methods=['GET'])
+def get_diversification():
+    """Get portfolio diversification breakdown"""
+    try:
+        tracker = get_tracker()
+        return jsonify({"status": "success", **tracker.get_diversification()})
+    except Exception as e:
+        logger.error(f"Failed to get diversification: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/positions/changes', methods=['GET'])
+def get_position_changes():
+    """Detect recently opened/closed positions"""
+    try:
+        tracker = get_tracker()
+        return jsonify({"status": "success", **tracker.detect_changes()})
+    except Exception as e:
+        logger.error(f"Failed to detect changes: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/orders', methods=['GET'])
@@ -461,58 +433,27 @@ def get_orders():
         logger.error(f"Failed to get orders: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/orders/<order_id>', methods=['GET'])
-def get_order_status(order_id):
-    """Get status of a specific order"""
-    global t212_client
-    try:
-        if t212_client is None:
-            init_t212_client()
-
-        # Check open orders first
-        open_orders = t212_client.get_orders()
-        for order in open_orders:
-            if str(order.get("id")) == str(order_id):
-                return jsonify({
-                    "status": "open",
-                    "order": order
-                })
-
-        # Check order history
-        history = t212_client.get_order_history()
-        for order in history:
-            if str(order.get("id")) == str(order_id):
-                return jsonify({
-                    "status": "filled/historical",
-                    "order": order
-                })
-
-        return jsonify({
-            "status": "not_found",
-            "order_id": order_id
-        }), 404
-
-    except Exception as e:
-        logger.error(f"Failed to get order {order_id}: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
 @app.route('/api/news/<symbol>', methods=['GET'])
 def get_symbol_news(symbol: str):
     """
     Get news and sentiment for a specific symbol.
-    Returns recent news articles and AI sentiment analysis.
     """
     try:
-        from polygon_client import YFinanceDataProvider
-
-        provider = YFinanceDataProvider()
-        news_items = provider.get_ticker_news(symbol, limit=20)
+        from monitor import get_monitor
+        monitor = get_monitor()
+        news_items = monitor._fetch_news_for_symbol(symbol)
 
         sentiment_data = None
         if news_items and HAS_NEWS_SENTIMENT:
-            from news_sentiment import get_sentiment_analyzer
-            analyzer = get_sentiment_analyzer()
-            sentiment = analyzer.analyze_news(news_items)
+            # Check cache first
+            if symbol in monitor.sentiment_cache:
+                sentiment = monitor.sentiment_cache[symbol]
+            else:
+                from news_sentiment import get_sentiment_analyzer
+                analyzer = get_sentiment_analyzer()
+                sentiment = analyzer.analyze_news(news_items)
+                monitor.sentiment_cache[symbol] = sentiment
+            
             sentiment_data = {
                 "sentiment": sentiment.sentiment,
                 "confidence": sentiment.confidence,
@@ -544,13 +485,10 @@ if __name__ == '__main__':
     if get_mode() == "demo":
         print("\n" + "="*60)
         print("🔔 T212 DEMO MODE ACTIVE")
-        print("🔔 Website: https://demo.trading212.com")
-        print("🔔 No real money will be used")
         print("="*60 + "\n")
     else:
         print("\n" + "="*60)
         print("🚨 T212 LIVE MODE ACTIVE")
-        print("🚨 Website: https://app.trading212.com")
         print("🚨 REAL MONEY IS AT RISK!")
         print("="*60 + "\n")
 

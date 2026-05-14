@@ -20,6 +20,7 @@ class SentimentResult:
     summary: str
     key_themes: List[str]
     relevant_tickers: List[str]
+    stock_mentioned: bool = False  # target ticker explicitly in news
     provider: str = "N/A"  # "MiniMax", "Fallback", etc.
 
 
@@ -59,12 +60,13 @@ class NewsSentimentAnalyzer:
                 self._client = None
         return self._client
 
-    def analyze_news(self, news_items: List[Dict]) -> SentimentResult:
+    def analyze_news(self, news_items: List[Dict], target_symbol: str = "") -> SentimentResult:
         """
         Analyze a list of news items and return sentiment.
 
         Args:
             news_items: List of dicts with 'title', 'summary', 'published', 'publisher'
+            target_symbol: Check if this ticker is explicitly mentioned in news
 
         Returns:
             SentimentResult with sentiment, confidence, and themes
@@ -79,6 +81,16 @@ class NewsSentimentAnalyzer:
                 provider="N/A"
             )
 
+        # Check if target symbol is explicitly mentioned in any news item
+        stock_mentioned = False
+        if target_symbol:
+            symbol_clean = target_symbol.replace(".L", "")
+            for item in news_items:
+                text = f"{item.get('title', '')} {item.get('summary', '')}".upper()
+                if symbol_clean.upper() in text or target_symbol.upper() in text:
+                    stock_mentioned = True
+                    break
+
         # Combine titles for batch analysis
         titles = [n.get("title", "") for n in news_items if n.get("title")]
         summaries = [n.get("summary", "") for n in news_items if n.get("summary")]
@@ -86,7 +98,9 @@ class NewsSentimentAnalyzer:
         combined_text = " ".join(titles[:5])  # Focus on recent headlines
         combined_summary = " ".join(summaries[:3]) if summaries else combined_text
 
-        return self._analyze_text(combined_text, combined_summary, news_items)
+        result = self._analyze_text(combined_text, combined_summary, news_items)
+        result.stock_mentioned = stock_mentioned
+        return result
 
     def _analyze_text(self, text: str, summary: str, news_items: List[Dict]) -> SentimentResult:
         """Internal analysis using MiniMax or fallback heuristic."""

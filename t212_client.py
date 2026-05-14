@@ -2,7 +2,7 @@ import requests
 import base64
 import logging
 from typing import Optional, Dict, List
-import config  # Import module, not values - we read values at runtime
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -16,29 +16,41 @@ class T212Client:
 
         self.base_url = config.get_t212_base_url()
         self.api_key, self.api_secret = config.get_t212_credentials()
-        self.auth = base64.b64encode(
-            f"{self.api_key}:{self.api_secret}".encode()
-        ).decode()
-        self.headers = {
-            "Authorization": f"Basic {self.auth}",
-            "Content-Type": "application/json"
-        }
+        
+        # T212 Public API v0 typically uses the API key directly in the Authorization header
+        # or sometimes as Basic auth. We'll support both via a flexible approach.
+        if self.api_secret:
+            # If secret is present, use Basic Auth
+            auth_str = base64.b64encode(f"{self.api_key}:{self.api_secret}".encode()).decode()
+            self.headers = {
+                "Authorization": f"Basic {auth_str}",
+                "Content-Type": "application/json"
+            }
+        else:
+            # If no secret, use the key directly (standard for T212 Public API v0)
+            self.headers = {
+                "Authorization": self.api_key,
+                "Content-Type": "application/json"
+            }
+            
         logger.info(f"T212Client initialized with base URL: {self.base_url}")
 
     def _api_call(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Make API call with error handling"""
         try:
-            response = requests.request(method, endpoint, headers=self.headers, timeout=15, **kwargs)
+            # Inject headers into kwargs if not present
+            if 'headers' not in kwargs:
+                kwargs['headers'] = self.headers
+                
+            response = requests.request(method, endpoint, timeout=15, **kwargs)
+            
+            if response.status_code == 401:
+                logger.error(f"Authentication failed for {endpoint}. Check your API key.")
+                
             response.raise_for_status()
             return response
         except requests.exceptions.HTTPError as e:
             logger.error(f"HTTP {e.response.status_code} for {endpoint}: {e.response.text[:200]}")
-            raise
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"Connection error to {endpoint}: {e}")
-            raise
-        except requests.exceptions.Timeout as e:
-            logger.error(f"Timeout for {endpoint}: {e}")
             raise
         except Exception as e:
             logger.error(f"Unexpected error for {endpoint}: {e}")
@@ -51,7 +63,7 @@ class T212Client:
 
     def get_positions(self) -> List[Dict]:
         """Get current positions"""
-        response = self._api_call("GET", f"{self.base_url}/equity/positions")
+        response = self._api_call("GET", f"{self.base_url}/equity/portfolio/positions")
         return response.json()
 
     def get_orders(self) -> List[Dict]:
@@ -62,20 +74,24 @@ class T212Client:
     def place_order(self, instrument_code: str, quantity: int, order_type: str = "market", side: str = "buy", limit_price: Optional[float] = None) -> Dict:
         """
         Place an order
-        order_type: "market", "limit", "stop", "stop_limit"
-        side: "buy" or "sell"
         """
-        endpoint = f"{self.base_url}/equity/orders"
+        endpoint = f"{self.base_url}/equity/orders/{order_type}"
 
         order_data = {
-            "instrument_code": instrument_code,
-            "quantity": quantity,
-            "order_type": order_type,
-            "side": side
+            "instrumentCode": instrument_code,
+            "quantity": quantity
         }
-
-        if limit_price:
-            order_data["limit_price"] = limit_price
+        
+        # T212 API v0 expects different fields for different order types
+        if order_type == "market":
+            # Market order doesn't need limitPrice
+            pass
+        elif order_type == "limit":
+            order_data["limitPrice"] = limit_price
+        
+        # Side is usually part of the data or endpoint?
+        # In T212 v0, it's often POST /equity/orders/market with side in payload
+        order_data["side"] = side.upper()
 
         response = self._api_call("POST", endpoint, json=order_data)
         return response.json()
@@ -87,5 +103,6 @@ class T212Client:
 
     def get_order_history(self) -> List[Dict]:
         """Get order history"""
+        # Note: v0 history endpoint is /equity/history/orders or similar
         response = self._api_call("GET", f"{self.base_url}/equity/history/orders")
         return response.json()

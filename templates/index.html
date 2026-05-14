@@ -314,7 +314,7 @@
         .market-dot.closed { background: #eab308; }
         .market-dot.weekend { background: #888; }
         .market-info { display: flex; flex-direction: column; align-items: center; text-align: center; }
-        #marketText { font-weight: 600; font-size: 14px; color: #eab308; }
+        #marketText { font-weight: 600; font-size: 14px; }
         .market-text-open { color: #22c55e; }
         .market-text-closed { color: #eab308; }
         .market-hours { color: #888; font-size: 11px; margin-top: 2px; }
@@ -576,13 +576,15 @@
                 } else {
                     tbody.innerHTML = positions.map(p => {
                         const pnl = p.pnl || 0;
-                        const pnlPct = p.pnlPercent || 0;
+                        const pnlPct = p.pnl_percent || 0;
+                        const price = p.current_price || p.currentPrice || 0;
+                        const avg = p.avg_price || p.avgPrice || 0;
                         const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
                         return `<tr>
                             <td>${p.symbol || '—'}</td>
                             <td>${p.quantity || 0}</td>
-                            <td>£${(p.avgPrice || 0).toFixed(2)}</td>
-                            <td>£${(p.currentPrice || 0).toFixed(2)}</td>
+                            <td>£${avg.toFixed(2)}</td>
+                            <td>£${price.toFixed(2)}</td>
                             <td class="${pnlClass}">£${pnl.toFixed(2)}</td>
                             <td class="${pnlClass}">${pnlPct.toFixed(1)}%</td>
                         </tr>`;

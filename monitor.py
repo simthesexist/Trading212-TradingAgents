@@ -7,12 +7,20 @@ import logging
 import os
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass, field
 from watchlist import LSE_WATCHLIST
 from strategies import STRATEGIES, STRATEGY_KEYS
 from polygon_client import YFinanceDataProvider, PolygonDataProvider
+from position_tracker import get_tracker
+from execution_rules import ExecutionRules
+
+# Try to import ZoneInfo (Python 3.9+)
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 
 try:
     from news_sentiment import get_sentiment_analyzer, SentimentResult
@@ -20,36 +28,43 @@ try:
 except ImportError:
     HAS_NEWS_SENTIMENT = False
 
-from datetime import datetime, timedelta
-import holidays
-
-# UK public holidays (London Stock Exchange)
-UK_HOLIDAYS = holidays.UK(years=range(2020, 2030))
+try:
+    import holidays
+    # UK public holidays (London Stock Exchange)
+    UK_HOLIDAYS = holidays.UK(years=range(2020, 2030))
+    HAS_HOLIDAYS = True
+except ImportError:
+    HAS_HOLIDAYS = False
+    UK_HOLIDAYS = []
+    logging.getLogger(__name__).warning("Optional dependency 'holidays' not found. Bank holiday checks will be skipped.")
 
 def is_lse_market_open() -> bool:
     """
-    Check if LSE market is currently open.
-    Returns True if within 07:45-16:45 UTC LSE trading hours (UTC).
-    Handles GMT/BST automatically via Python's timezone handling.
-    UK bank holidays are excluded.
+    Check if LSE market is currently open (UK local time, GMT/BST aware).
+    Returns True if within 07:45-16:45 UK local time on weekdays.
+    UK bank holidays are excluded if 'holidays' package is available.
     """
-    now = datetime.utcnow()
+    try:
+        if ZoneInfo:
+            uk_tz = ZoneInfo("Europe/London")
+            now_uk = datetime.now(uk_tz)
+        else:
+            # Fallback if ZoneInfo not available
+            now_uk = datetime.now()
+    except Exception:
+        # Fallback if ZoneInfo fails (e.g. missing tzdata)
+        now_uk = datetime.now() 
 
     # Weekend check (Saturday=5, Sunday=6)
-    if now.weekday() >= 5:
+    if now_uk.weekday() >= 5:
         return False
 
     # UK bank holiday check
-    if now.date() in UK_HOLIDAYS:
+    if HAS_HOLIDAYS and now_uk.date() in UK_HOLIDAYS:
         return False
 
-    # LSE open: 07:45 to 16:45 (UTC) - 15 min pre-market, 15 min post-market
-    # 07:45 = 7*60+45 = 465 minutes
-    # 16:45 = 16*60+45 = 1005 minutes
-    current_minutes = now.hour * 60 + now.minute
-
-    return 465 <= current_minutes < 1005
-
+    # LSE open: 07:45 to 16:45 UK local time (handles GMT/BST automatically)
+    current_minutes = now_uk.hour * 60 + now_uk.minute
     return 465 <= current_minutes < 1005
 
 # Use yfinance as primary (free), fallback to Polygon.io if API key available
@@ -60,6 +75,14 @@ def get_data_provider():
     return YFinanceDataProvider()
 
 logger = logging.getLogger(__name__)
+
+BUY_SIGNAL_STRATEGIES = frozenset({
+    "RSI_OVERSOLD", "RSI_EXTREME_OVERSOLD",
+    "MA_CROSS_ABOVE", "MACD_CROSS_ABOVE",
+    "VOLUME_SPIKE", "PRICE_DROP_5PCT",
+    "NEWS_BULLISH", "NEWS_VERY_BULLISH",
+    "EARNINGS_BEAT", "DIVIDEND_INCREASE", "UPGRADE",
+})
 
 @dataclass
 class Alert:
@@ -72,12 +95,14 @@ class Alert:
     message: str
     indicator_value: float = 0.0
     details: Dict = field(default_factory=dict)
+    stock_mentioned: bool = False
 
 @dataclass
 class StockStatus:
     """Status of a monitored stock"""
     symbol: str
     price: float = 0.0
+    price_change_pct: float = 0.0
     rsi: float = 0.0
     volume: float = 0.0
     volume_avg: float = 0.0
@@ -115,6 +140,10 @@ class StockMonitor:
         # Initialize data provider (yfinance by default, polygon if key available)
         self.data_provider = get_data_provider()
 
+        # Position tracking and execution rules
+        self.position_tracker = get_tracker()
+        self.execution_rules = ExecutionRules(self.position_tracker)
+
         # Previous values for crossover detection
         self.prev_values: Dict[str, Dict] = {}
 
@@ -122,6 +151,7 @@ class StockMonitor:
         self.sentiment_analyzer = None
         self.sentiment_cache: Dict[str, SentimentResult] = {}
         self.news_cache: Dict[str, List[Dict]] = {}
+        self.news_hashes: Dict[str, str] = {} # For change detection
 
         if HAS_NEWS_SENTIMENT:
             try:
@@ -171,6 +201,7 @@ class StockMonitor:
             return None
 
         def ema(data, period):
+            if not data: return 0
             k = 2 / (period + 1)
             ema_val = data[0]
             for d in data[1:]:
@@ -207,7 +238,6 @@ class StockMonitor:
     def update_stock_data(self, symbol: str) -> bool:
         """Fetch and update data for a single stock"""
         try:
-            ticker = symbol.replace('.L', '')
             bars = self.data_provider.get_aggregate_bars(
                 symbol,
                 timespan="minute",
@@ -235,13 +265,19 @@ class StockMonitor:
                 status.macd = macd_data["macd"]
                 status.macd_signal = macd_data["signal"]
 
-            if bars:
-                status.prev_close = bars[-1].get("close", status.price)
+            # Calculate price change from previous close
+            prev_close_data = self.data_provider.get_prev_close(symbol)
+            if prev_close_data:
+                status.prev_close = prev_close_data.get("close", prices[0])
+            else:
+                status.prev_close = prices[0]
+            
+            status.price_change_pct = ((status.price - status.prev_close) / status.prev_close) * 100 if status.prev_close else 0
 
             status.last_updated = datetime.now()
 
             logger.info(
-                f"{symbol}: price={status.price:.2f}, "
+                f"{symbol}: price={status.price:.2f} ({status.price_change_pct:+.1f}%), "
                 f"rsi={status.rsi:.1f}, vol={status.volume:.0f}"
             )
             return True
@@ -294,6 +330,16 @@ class StockMonitor:
                     if status.volume_avg > 0:
                         ratio = status.volume / status.volume_avg
                         if condition == "spikes_above" and ratio >= threshold:
+                            alerts.append(Alert(
+                                timestamp=datetime.now(),
+                                symbol=symbol,
+                                strategy_key=strategy_key,
+                                strategy_name=strategy["name"],
+                                priority=strategy["priority"],
+                                message=f"{strategy['description']} (vol={ratio:.1f}x avg)",
+                                indicator_value=ratio
+                            ))
+                        elif condition == "drops_below" and ratio <= threshold:
                             alerts.append(Alert(
                                 timestamp=datetime.now(),
                                 symbol=symbol,
@@ -359,6 +405,29 @@ class StockMonitor:
                                 message=strategy["description"],
                                 indicator_value=status.macd
                             ))
+                
+                # Price checks
+                elif indicator == "Price":
+                    if condition == "drops_by_percent" and status.price_change_pct <= -threshold:
+                        alerts.append(Alert(
+                            timestamp=datetime.now(),
+                            symbol=symbol,
+                            strategy_key=strategy_key,
+                            strategy_name=strategy["name"],
+                            priority=strategy["priority"],
+                            message=f"{strategy['description']} ({status.price_change_pct:+.1f}%)",
+                            indicator_value=status.price_change_pct
+                        ))
+                    elif condition == "rises_by_percent" and status.price_change_pct >= threshold:
+                        alerts.append(Alert(
+                            timestamp=datetime.now(),
+                            symbol=symbol,
+                            strategy_key=strategy_key,
+                            strategy_name=strategy["name"],
+                            priority=strategy["priority"],
+                            message=f"{strategy['description']} ({status.price_change_pct:+.1f}%)",
+                            indicator_value=status.price_change_pct
+                        ))
 
             except Exception as e:
                 logger.error(f"Strategy check error for {symbol}/{strategy_key}: {e}")
@@ -370,7 +439,8 @@ class StockMonitor:
             "ma_fast": status.ma_fast,
             "ma_slow": status.ma_slow,
             "macd": status.macd,
-            "macd_signal": status.macd_signal
+            "macd_signal": status.macd_signal,
+            "price": status.price
         }
 
         return alerts
@@ -381,6 +451,14 @@ class StockMonitor:
 
         for symbol in self.watched_stocks:
             if self.update_stock_data(symbol):
+                status = self.watched_stocks[symbol]
+                current_price = status.price
+
+                # Check stop loss / take profit on open positions
+                sell_result = self.check_open_positions(symbol, current_price)
+                if sell_result and sell_result.get("status") == "executed":
+                    logger.info(f"SELL EXECUTED: {symbol} — position closed via SL/TP")
+
                 alerts = self.check_strategies(symbol)
                 # Also check news-based strategies
                 news_alerts = self._check_news_strategies(symbol)
@@ -393,11 +471,62 @@ class StockMonitor:
                     if self.on_alert:
                         self.on_alert(alert)
 
+                    # Check sell signals for TP2 exit (opposing signal on remaining half)
+                    from execution_rules import SELL_SIGNAL_STRATEGIES
+                    if alert.strategy_key in SELL_SIGNAL_STRATEGIES:
+                        tp2_result = self.check_open_positions(
+                            symbol, current_price, alert=alert
+                        )
+                        if tp2_result and tp2_result.get("status") == "executed":
+                            logger.info(f"TP2 EXIT: {symbol} via {alert.strategy_name}")
+
+                    # Execute buy signals if strategy qualifies
+                    if alert.strategy_key in BUY_SIGNAL_STRATEGIES:
+                        balance = self._get_balance()
+                        can_buy, reason = self.execution_rules.check_buy(
+                            symbol, alert, balance
+                        )
+                        if can_buy:
+                            result = self.execution_rules.execute_buy(
+                                symbol, alert, balance
+                            )
+                            if result.get("status") == "executed":
+                                logger.info(
+                                    f"BUY EXECUTED: {symbol} — "
+                                    f"{result.get('quantity')} shares"
+                                )
+                        else:
+                            logger.info(f"BUY BLOCKED: {symbol} — {reason}")
+
         # Keep only recent alerts in memory
         self.alerts = [a for a in self.alerts[-50:] if
                       (datetime.now() - a.timestamp).total_seconds() < 3600]
 
         return all_alerts
+
+    def check_open_positions(self, symbol: str, current_price: float, alert=None) -> Optional[Dict]:
+        """Check open positions for stop loss / take profit triggers."""
+        try:
+            position = self.position_tracker.get_position(symbol)
+        except Exception:
+            position = None
+        if not position:
+            return None
+        should_sell, reason = self.execution_rules.check_sell(symbol, position, current_price, alert=alert)
+        if should_sell:
+            result = self.execution_rules.execute_sell(symbol, position, current_price, alert=alert)
+            logger.info(f"SELL TRIGGERED: {symbol} — {reason}")
+            return result
+        return None
+
+    def _get_balance(self) -> float:
+        """Get current account balance."""
+        try:
+            account = self.position_tracker.client.get_account_summary()
+            return float(account.get("totalValue", account.get("equity", 0)))
+        except Exception as e:
+            logger.warning(f"Could not fetch balance: {e}")
+            return 0.0
 
     def run(self):
         """Main monitoring loop"""
@@ -415,7 +544,10 @@ class StockMonitor:
                 else:
                     # Market closed - sleep 5 minutes and check again
                     logger.info("LSE market closed. Pausing until next trading window.")
-                    time.sleep(300)  # Check again in 5 minutes
+                    # Wait 5 minutes but allow interruption if self.running changes
+                    for _ in range(30):
+                        if not self.running: break
+                        time.sleep(10)
             except Exception as e:
                 logger.error(f"Monitor loop error: {e}")
                 time.sleep(self.poll_interval)
@@ -432,9 +564,7 @@ class StockMonitor:
     def stop(self):
         """Stop monitoring"""
         self.running = False
-        if self.monitor_thread:
-            self.monitor_thread.join(timeout=5)
-        logger.info("Monitor stopped")
+        logger.info("Monitor stop requested")
 
     def get_status(self) -> Dict:
         """Get current monitor status"""
@@ -442,6 +572,7 @@ class StockMonitor:
         for symbol, status in self.watched_stocks.items():
             stocks_data[symbol] = {
                 "price": status.price,
+                "price_change_pct": status.price_change_pct,
                 "rsi": status.rsi,
                 "volume": status.volume,
                 "volume_avg": status.volume_avg,
@@ -486,6 +617,10 @@ class StockMonitor:
             if news:
                 self.news_cache[cache_key] = news
                 self.news_cache[f"{cache_key}_time"] = datetime.now()
+                
+                # Create a simple hash/string of news titles to detect actual changes
+                titles = "|".join([n.get("title", "") for n in news[:5]])
+                self.news_hashes[symbol] = titles
             return news
         except Exception as e:
             logger.error(f"Failed to fetch news for {symbol}: {e}")
@@ -504,15 +639,22 @@ class StockMonitor:
             if not news_items:
                 return alerts
 
-            # Analyze sentiment
-            sentiment = self.sentiment_analyzer.analyze_news(news_items)
-
-            # Store in sentiment cache
-            self.sentiment_cache[symbol] = sentiment
+            # Only analyze if news content has changed or we have no sentiment yet
+            news_hash = self.news_hashes.get(symbol, "")
+            last_hash = getattr(self, f"_last_hash_{symbol}", None)
+            
+            if news_hash != last_hash or symbol not in self.sentiment_cache:
+                logger.info(f"News changed for {symbol}, re-analyzing sentiment")
+                sentiment = self.sentiment_analyzer.analyze_news(news_items, target_symbol=symbol)
+                self.sentiment_cache[symbol] = sentiment
+                setattr(self, f"_last_hash_{symbol}", news_hash)
+            else:
+                sentiment = self.sentiment_cache[symbol]
 
             logger.info(
                 f"{symbol} news sentiment: {sentiment.sentiment} "
                 f"(confidence: {sentiment.confidence:.0%})"
+                + (f" ⚡ Stock mentioned in news — boosted confidence" if sentiment.stock_mentioned else "")
             )
 
             # Check against news strategies
@@ -523,59 +665,71 @@ class StockMonitor:
                 condition = strategy["condition"]
                 threshold = strategy.get("threshold", 0.65)
 
+                # Boost: lower thresholds when stock explicitly mentioned in news
+                if sentiment.stock_mentioned:
+                    if condition in ("sentiment_positive", "sentiment_negative"):
+                        threshold = 0.50
+                    elif condition in ("sentiment_positive_high", "sentiment_negative_high"):
+                        threshold = 0.65
+
+                effective_confidence = sentiment.confidence
+
                 if condition == "sentiment_positive" and sentiment.sentiment == "POSITIVE":
-                    if sentiment.confidence >= threshold:
+                    if effective_confidence >= threshold:
                         alerts.append(Alert(
                             timestamp=datetime.now(),
                             symbol=symbol,
                             strategy_key=strategy_key,
                             strategy_name=strategy["name"],
                             priority=strategy["priority"],
-                            message=f"{strategy['description']} ({sentiment.confidence:.0%})",
-                            indicator_value=sentiment.confidence
+                            message=f"{strategy['description']} ({effective_confidence:.0%})",
+                            indicator_value=effective_confidence,
+                            stock_mentioned=sentiment.stock_mentioned
                         ))
 
                 elif condition == "sentiment_negative" and sentiment.sentiment == "NEGATIVE":
-                    if sentiment.confidence >= threshold:
+                    if effective_confidence >= threshold:
                         alerts.append(Alert(
                             timestamp=datetime.now(),
                             symbol=symbol,
                             strategy_key=strategy_key,
                             strategy_name=strategy["name"],
                             priority=strategy["priority"],
-                            message=f"{strategy['description']} ({sentiment.confidence:.0%})",
-                            indicator_value=sentiment.confidence
+                            message=f"{strategy['description']} ({effective_confidence:.0%})",
+                            indicator_value=effective_confidence,
+                            stock_mentioned=sentiment.stock_mentioned
                         ))
 
                 elif condition == "sentiment_positive_high" and sentiment.sentiment == "POSITIVE":
-                    if sentiment.confidence >= threshold:
+                    if effective_confidence >= threshold:
                         alerts.append(Alert(
                             timestamp=datetime.now(),
                             symbol=symbol,
                             strategy_key=strategy_key,
                             strategy_name=strategy["name"],
                             priority=strategy["priority"],
-                            message=f"{strategy['description']} ({sentiment.confidence:.0%})",
-                            indicator_value=sentiment.confidence
+                            message=f"{strategy['description']} ({effective_confidence:.0%})",
+                            indicator_value=effective_confidence,
+                            stock_mentioned=sentiment.stock_mentioned
                         ))
 
                 elif condition == "sentiment_negative_high" and sentiment.sentiment == "NEGATIVE":
-                    if sentiment.confidence >= threshold:
+                    if effective_confidence >= threshold:
                         alerts.append(Alert(
                             timestamp=datetime.now(),
                             symbol=symbol,
                             strategy_key=strategy_key,
                             strategy_name=strategy["name"],
                             priority=strategy["priority"],
-                            message=f"{strategy['description']} ({sentiment.confidence:.0%})",
-                            indicator_value=sentiment.confidence
+                            message=f"{strategy['description']} ({effective_confidence:.0%})",
+                            indicator_value=effective_confidence,
+                            stock_mentioned=sentiment.stock_mentioned
                         ))
 
         except Exception as e:
             logger.error(f"News strategy check failed for {symbol}: {e}")
 
         return alerts
-
 
 # Global monitor instance
 _monitor: Optional[StockMonitor] = None
