@@ -5,6 +5,24 @@ import threading
 import time
 from t212_client import T212Client
 import config
+
+
+def _write_env_mode(mode):
+    """Persist runtime mode to .env file so next restart uses correct mode."""
+    try:
+        with open('.env', 'r') as f:
+            lines = f.readlines()
+        with open('.env', 'w') as f:
+            for line in lines:
+                if line.startswith('T212_MODE='):
+                    f.write(f'T212_MODE={mode}\n')
+                else:
+                    f.write(line)
+        logger.info(f"Persisted T212_MODE={mode} to .env")
+    except Exception as e:
+        logger.error(f"Failed to write T212_MODE to .env: {e}")
+
+
 from tradingagents_integration import TradingAgentsIntegration
 from monitor import get_monitor
 
@@ -96,8 +114,11 @@ def post_mode_api():
     RUNTIME_MODE = new_mode
     logger.info(f"MODE SWITCH: {old_mode} -> {new_mode}")
 
-    # Reinitialize T212 client and execution layer with new mode
+    # Update runtime config and persist to .env
     os.environ["T212_MODE"] = new_mode
+    config.T212_MODE = new_mode
+    _write_env_mode(new_mode)
+
     t212_client = T212Client()
     if HAS_WEBHOOK_BRIDGE:
         execution_layer = T212ExecutionLayer()
