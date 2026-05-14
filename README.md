@@ -109,6 +109,22 @@ T212ExecutionLayer.execute_order()
 T212 Demo/Live API → Order Executed
 ```
 
+## ⚠️ Trading Disclosure
+
+**This software is for informational and educational purposes only.**
+
+- This system executes real trades on a live Trading 212 account using REAL MONEY when set to live mode.
+- Autonomously trading involves substantial risk of financial loss.
+- Past performance does not guarantee future results.
+- This system is not a licensed financial advisor or investment service.
+- You are solely responsible for any trades placed using this software and must accept all associated risks.
+- The maintainer(s) of this project accept no liability for any financial losses incurred as a result of using this software.
+- **Only trade with money you can afford to lose.** Start in demo mode and understand all risks before switching to live execution.
+
+**Never invest more than you can afford to lose.**
+
+---
+
 ## Files
 
 - `config.py` - Configuration loader
