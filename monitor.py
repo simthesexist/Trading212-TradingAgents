@@ -592,7 +592,7 @@ class StockMonitor:
                             logger.info(f"TP2 EXIT: {symbol} via {alert.strategy_name}")
 
                     # In indicator_ai mode: queue for AI validation of BUY signals
-                    if config.AI_MODE == "indicator_ai" and alert.action == "BUY":
+                    if config.AI_MODE == "indicator_ai" and alert.strategy_key in BUY_SIGNAL_STRATEGIES:
                         with self.ai_queue_lock:
                             self.ai_analysis_queue.append({
                                 "symbol": symbol,
@@ -619,7 +619,7 @@ class StockMonitor:
                                     "rsi": status.rsi,
                                     "macd": status.macd,
                                     "news_sentiment": self.sentiment_cache.get(symbol, None),
-                                    "ai_mode": "indicator"
+                                    "ai_mode": "indicator_ai"
                                 })
                             logger.info(f"BUY queued for AI analysis: {symbol}")
                         else:
@@ -735,8 +735,8 @@ class StockMonitor:
                 if self._should_auto_close():
                     self._do_auto_close()
 
-                # Check if LSE market is open
-                if is_lse_market_open():
+                # Demo mode: always run. Live mode: respect LSE market hours
+                if config.T212_MODE == "demo" or is_lse_market_open():
                     alerts = self.check_all_stocks()
                     if alerts:
                         logger.info(f"Triggered {len(alerts)} alerts")
