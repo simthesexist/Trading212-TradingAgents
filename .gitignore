@@ -28,8 +28,9 @@ Thumbs.db
 *.log
 data/
 
-# Wiki (local only)
+# Wiki and analysis (local only)
 WIKI.md
+strategy_analysis.md
 
 # Test/discovery scripts (local only)
 test_*.py
