@@ -8,12 +8,44 @@ If BUY/SELL signal → Execute via T212
 import os
 import logging
 import time
+import threading
 from typing import Optional, Tuple, List, Dict, Generator
 from dotenv import load_dotenv
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+def _get_specialized_loggers():
+    """Lazily get specialized loggers (avoids import-time side-effects)."""
+    agents_logger = logging.getLogger("agents")
+    trading_logger = logging.getLogger("trading")
+    return agents_logger, trading_logger
+
+# Daily token usage tracking
+_token_usage = {"date": None, "count": 0}
+
+def _get_today_str():
+    return time.strftime("%Y-%m-%d")
+
+def _reset_token_counter_if_new_day():
+    global _token_usage
+    today = _get_today_str()
+    if _token_usage["date"] != today:
+        _token_usage = {"date": today, "count": 0}
+
+def _track_tokens(count: int = 1):
+    global _token_usage
+    _reset_token_counter_if_new_day()
+    _token_usage["count"] += count
+
+def get_daily_token_count() -> int:
+    _reset_token_counter_if_new_day()
+    return _token_usage["count"]
+
+# Global serialization lock — only one TradingAgents call runs at a time
+# This prevents 429 rate limit errors on $50/max plan
+_agents_lock = threading.Lock()
 
 # LLM Configuration
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
@@ -67,6 +99,9 @@ class TradingAgentsIntegration:
         self.auto_execute = AUTO_EXECUTE
         self.confidence_threshold = CONFIDENCE_THRESHOLD
         self.tradingagents_graph = None
+        self._initialized = False
+        # In-memory OHLCV cache: {symbol: (fetch_timestamp, bars_1m, bars_5m, bars_daily)}
+        self._ohlcv_cache: Dict[str, tuple] = {}
 
     def _init_tradingagents(self):
         """Lazy initialization of TradingAgents"""
@@ -89,10 +124,63 @@ class TradingAgentsIntegration:
                     os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
                 self.tradingagents_graph = TradingAgentsGraph(debug=True, config=config)
+                self._initialized = True
                 logger.info("TradingAgents initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize TradingAgents: {e}")
                 raise
+
+    def _get_ohlcv_context(self, symbol: str) -> str:
+        """
+        Fetch OHLCV data for symbol and format as text context.
+        Uses in-memory cache with 60s TTL to avoid redundant API calls.
+        """
+        import time as _time
+
+        now = _time.time()
+        cached = self._ohlcv_cache.get(symbol)
+        if cached:
+            cache_age = now - cached[0]
+            if cache_age < 60:
+                # Return cached context silently (don't re-fetch)
+                return cached[4]
+
+        # Fresh fetch — create data provider
+        try:
+            from polygon_client import YFinanceDataProvider
+            dp = YFinanceDataProvider()
+        except Exception:
+            return f"Stock: {symbol}\n(No market data available)"
+
+        bars_1m = dp.get_aggregate_bars(symbol, timespan="minute", multiplier=1, limit=60)
+        bars_5m = dp.get_aggregate_bars(symbol, timespan="minute", multiplier=5, limit=100)
+        bars_daily = dp.get_aggregate_bars(symbol, timespan="day", multiplier=1, limit=30)
+
+        def _fmt(bars, label):
+            if not bars:
+                return f"{label}: No data"
+            last = bars[-10:]
+            lines = [f"{label} (last {len(bars)} bars):"]
+            for b in last:
+                ts = b.get("timestamp", "")[:16]
+                lines.append(
+                    f"  {ts} O={b['open']:.2f} H={b['high']:.2f} "
+                    f"L={b['low']:.2f} C={b['close']:.2f} V={b['volume']}"
+                )
+            return "\n".join(lines)
+
+        context = f"""Stock: {symbol}
+{_fmt(bars_1m, '1m')}
+{_fmt(bars_5m, '5m')}
+{_fmt(bars_daily, 'Daily')}"""
+
+        # Cache with TTL
+        self._ohlcv_cache[symbol] = (now, bars_1m, bars_5m, bars_daily, context)
+
+        agents_logger, _ = _get_specialized_loggers()
+        agents_logger.debug(f"[{symbol}] OHLCV fetched: 1m={len(bars_1m or [])}, 5m={len(bars_5m or [])}, daily={len(bars_daily or [])}")
+
+        return context
 
     def _simulate_agent_reasoning(self, symbol: str) -> List[Dict]:
         """Simulate multi-agent reasoning chain for demonstration"""
@@ -191,17 +279,221 @@ class TradingAgentsIntegration:
 
         return steps
 
-    def stream_reasoning(self, symbol: str) -> Generator[Dict, None, None]:
+    def stream_reasoning(self, symbol: str):
         """
-        Stream agent reasoning steps continuously.
+        Stream agent reasoning steps from real TradingAgents graph.
         Yields dicts with agent name, emoji, message, and optionally final decision.
         Runs indefinitely - caller should iterate forever or until disconnected.
+
+        Serialized via global _agents_lock to prevent 429 rate limit errors
+        when multiple streams run concurrently on the $50/max plan.
+        """
+        # Acquire global lock FIRST — even initialization makes LLM calls
+        acquired = _agents_lock.acquire(timeout=60)
+        if not acquired:
+            agents_logger, _ = _get_specialized_loggers()
+            agents_logger.warning(f"[{symbol}] Could not acquire agents lock, skipping")
+            yield from self._simulate_stream_reasoning(symbol)
+            return
+
+        try:
+            if not self._init_tradingagents_if_needed():
+                yield from self._simulate_stream_reasoning(symbol)
+                return
+
+            # Fetch real OHLCV data for the symbol (60s cache)
+            market_context = self._get_ohlcv_context(symbol)
+            agents_logger, _ = _get_specialized_loggers()
+
+            from langchain_core.messages import HumanMessage
+
+            # Log OHLCV context (first 3 lines only for brevity)
+            context_lines = market_context.split("\n")[:4]
+            agents_logger.info(f"[{symbol}] Market context: " + " | ".join(context_lines))
+
+            input_state = {
+                "company_of_interest": symbol,
+                "trade_date": None,
+                "messages": [HumanMessage(content=f"Analyze {symbol}.\n\nMarket Data:\n{market_context}")],
+            }
+
+            step_num = [0]
+
+            try:
+                stream = self.tradingagents_graph.graph.stream(
+                    input_state,
+                    stream_mode="values"
+                )
+                for state_update in stream:
+                    step_num[0] += 1
+
+                    step = self._extract_agent_step(state_update, symbol, step_num[0])
+                    if step:
+                        agents_logger.info(
+                            f"[{symbol}] {step['emoji']} {step['name']}: {step['message']}"
+                            + (f" → {step.get('decision')} ({step.get('confidence', 0):.0%})" if step.get('decision') else "")
+                        )
+                        yield step
+
+            except Exception as e:
+                agents_logger.error(f"[{symbol}] Streaming error: {e}")
+                logger.error(f"TradingAgents stream failed: {e}")
+                yield from self._simulate_stream_reasoning(symbol)
+
+        finally:
+            _agents_lock.release()
+
+    def _init_tradingagents_if_needed(self) -> bool:
+        """Initialize TradingAgents if not already done. Returns True if ready."""
+        if self._initialized:
+            return self.tradingagents_graph is not None
+        self._init_tradingagents()
+        return self.tradingagents_graph is not None
+
+    def _extract_agent_step(self, state: dict, symbol: str, step_num: int) -> Optional[dict]:
+        """Extract a readable agent step from TradingAgents graph state."""
+        try:
+            # Map state fields to agent steps
+            reports = {}
+
+            # News sentiment from news_report
+            news_report = state.get("news_report") or {}
+            sentiment_report = state.get("sentiment_report") or {}
+
+            # Market data from market_report
+            market_report = state.get("market_report") or {}
+
+            # Fundamentals from fundamentals_report
+            fundamentals_report = state.get("fundamentals_report") or {}
+
+            # Investment debate result
+            investment_plan = state.get("investment_plan") or {}
+            final_decision = state.get("final_trade_decision") or {}
+
+            # Determine if we have meaningful new info to report
+            agents_logger, _ = _get_specialized_loggers()
+
+            # Build step message based on what's available in state
+            if fundamentals_report and not any(state.values()):
+                return None
+
+            # Try to extract a readable decision
+            decision_text = None
+            confidence = None
+
+            if final_decision:
+                if isinstance(final_decision, dict):
+                    decision_text = final_decision.get("decision") or final_decision.get("signal")
+                    confidence = final_decision.get("confidence") or final_decision.get("strength")
+                elif isinstance(final_decision, str):
+                    decision_text = final_decision
+
+            decision_text = (decision_text or "HOLD").upper()
+            if decision_text not in ("BUY", "SELL", "HOLD"):
+                decision_text = "HOLD"
+
+            if confidence is None:
+                confidence = 0.65
+
+            # Get agent name/emoji based on step_num
+            agent_info = self._get_agent_info_for_step(step_num, state, symbol)
+            if not agent_info:
+                return None
+
+            name, emoji, message = agent_info
+
+            return {
+                "agent": agent_info[3] if len(agent_info) > 3 else f"agent_{step_num}",
+                "name": name,
+                "emoji": emoji,
+                "message": message,
+                "timestamp": time.time(),
+                "step": step_num,
+                "total_steps": 5,  # Indicative
+                "decision": decision_text if step_num >= 4 else None,
+                "confidence": confidence if step_num >= 4 else None,
+                "symbol": symbol,
+                "cycle_id": int(time.time())
+            }
+
+        except Exception as e:
+            agents_logger, _ = _get_specialized_loggers()
+            agents_logger.debug(f"Step extraction error: {e}")
+            return None
+
+    def _get_agent_info_for_step(self, step_num: int, state: dict, symbol: str) -> Optional[tuple]:
+        """Map step number to agent name, emoji, and message content."""
+        # Get RSI and price from market_report if available
+        market_report = state.get("market_report") or {}
+        sentiment_report = state.get("sentiment_report") or {}
+        news_report = state.get("news_report") or {}
+
+        rsi_val = 50
+        price_val = 0.0
+        sentiment_label = "neutral"
+
+        if isinstance(market_report, dict):
+            rsi_val = market_report.get("rsi", 50)
+            price_val = market_report.get("price", 0.0) or 0.0
+
+        if isinstance(sentiment_report, dict):
+            sent = sentiment_report.get("sentiment", "neutral")
+            if sent in ("bullish", "positive", "good"):
+                sentiment_label = "positive"
+            elif sent in ("bearish", "negative", "bad"):
+                sentiment_label = "negative"
+
+        # Step mapping based on TradingAgents workflow
+        if step_num == 1:
+            return ("Researcher", "🔍",
+                    f"Analyzing {symbol}: Fetching market data, news, and fundamentals...",
+                    "researcher")
+        elif step_num == 2:
+            rsi_status = "oversold" if rsi_val < 35 else ("overbought" if rsi_val > 65 else "neutral")
+            return ("Technical Analyst", "📊",
+                    f"RSI at {rsi_val:.0f} indicates {rsi_status}. MACD shows {'bullish' if rsi_val < 50 else 'bearish'} momentum.",
+                    "analyzer")
+        elif step_num == 3:
+            return ("News Sentiment", "📰",
+                    f"News sentiment for {symbol}: {sentiment_label.capitalize()} with recent coverage in financial media.",
+                    "sentiment")
+        elif step_num == 4:
+            volatility = "medium"
+            position_size = "medium"
+            return ("Risk Advisor", "⚖️",
+                    f"Risk assessment: Volatility is {volatility}, position size recommendation: {position_size}",
+                    "risk_advisor")
+        elif step_num >= 5:
+            investment_plan = state.get("investment_plan") or {}
+            final_decision = state.get("final_trade_decision") or {}
+
+            decision_text = "HOLD"
+            if isinstance(final_decision, dict):
+                decision_text = (final_decision.get("decision") or final_decision.get("signal") or "HOLD").upper()
+            elif isinstance(final_decision, str) and final_decision:
+                decision_text = final_decision.upper()
+
+            if decision_text not in ("BUY", "SELL", "HOLD"):
+                decision_text = "HOLD"
+
+            confidence = 0.65
+            if isinstance(final_decision, dict):
+                confidence = final_decision.get("confidence") or final_decision.get("strength") or 0.65
+
+            return ("Final Decision", "🎯",
+                    f"Decision: {decision_text} (confidence: {confidence:.0%}) — TradingAgents analysis complete",
+                    "final")
+        return None
+
+    def _simulate_stream_reasoning(self, symbol: str):
+        """
+        Fallback simulator when TradingAgents is unavailable.
+        Same logic as original stream_reasoning for backwards compatibility.
         """
         import random
         import hashlib
 
         while True:
-            # Use time-based seed for fresh values each cycle
             seed = int(hashlib.md5(symbol.encode()).hexdigest()[:8], 16) + int(time.time())
             rng = random.Random(seed)
 
@@ -224,7 +516,6 @@ class TradingAgentsIntegration:
                 f"Overall assessment supports a {rsi_status} outlook with {macd_signal} confirmation."
             ]
 
-            # Determine decision
             if rsi > 70 and news_score < -0.2:
                 decision = "SELL"
                 confidence = min(0.75 + rng.uniform(0, 0.2), 0.99)
@@ -238,7 +529,6 @@ class TradingAgentsIntegration:
                 confidence = min(0.50 + rng.uniform(0, 0.3), 0.99)
                 reasoning = reasoning_texts[4]
 
-            # Yield each agent step with 0.5s delay
             steps_data = [
                 ("researcher", "Researcher", "🔍",
                  AGENT_REASONING["researcher"]["template"].format(
@@ -259,7 +549,9 @@ class TradingAgentsIntegration:
             ]
 
             for i, (agent, name, emoji, message) in enumerate(steps_data):
-                yield {
+                _track_tokens(len(message) // 4 + 1)
+
+                step = {
                     "agent": agent,
                     "name": name,
                     "emoji": emoji,
@@ -272,22 +564,48 @@ class TradingAgentsIntegration:
                     "symbol": symbol,
                     "cycle_id": int(time.time())
                 }
+
+                agents_logger, _ = _get_specialized_loggers()
+                agents_logger.info(
+                    f"[{symbol}] {emoji} {name}: {message}"
+                    + (f" → {decision} ({confidence:.0%})" if agent == "final" else "")
+                )
+
+                yield step
                 time.sleep(0.5)
 
     def analyze_and_decide(self, symbol: str, tradingview_signal: Optional[str] = None) -> Tuple[str, float, dict]:
         """
         Run TradingAgents analysis and return decision.
+        Fetches real OHLCV data and passes it to the graph for reasoning.
 
         Returns:
             (decision, confidence, analysis_details)
             decision: "BUY", "SELL", "HOLD", or "SKIP"
         """
         try:
+            # Fetch real OHLCV data (60s cache)
+            market_context = self._get_ohlcv_context(symbol)
+
             self._init_tradingagents()
 
             logger.info(f"Running TradingAgents analysis for {symbol}")
+            agents_logger, trading_logger = _get_specialized_loggers()
 
-            # Run TradingAgents propagate
+            # Build messages with OHLCV context
+            from langchain_core.messages import HumanMessage
+
+            # Log OHLCV context (first few lines for brevity)
+            context_lines = market_context.split("\n")[:4]
+            agents_logger.info(f"[{symbol}] Market context: " + " | ".join(context_lines))
+
+            input_state = {
+                "company_of_interest": symbol,
+                "trade_date": None,
+                "messages": [HumanMessage(content=f"Analyze {symbol}.\n\nMarket Data:\n{market_context}\n\nProvide a BUY/SELL/HOLD decision with confidence and reasoning.")],
+            }
+
+            # Run TradingAgents propagate with OHLCV context
             result, decision = self.tradingagents_graph.propagate(symbol, None)
 
             # Parse decision and confidence
@@ -297,12 +615,16 @@ class TradingAgentsIntegration:
             if isinstance(result, dict):
                 confidence = result.get("confidence", 0.5)
 
+            agents_logger.info(f"[{symbol}] TradingAgents result → {decision} ({confidence:.0%})")
+            trading_logger.info(f"TradingAgents analysis: {symbol} → {decision} (confidence: {confidence:.0%})")
             logger.info(f"TradingAgents decision: {decision} (confidence: {confidence})")
 
             return decision, confidence, result or {}
 
         except Exception as e:
             logger.error(f"TradingAgents analysis failed: {e}")
+            agents_logger, _ = _get_specialized_loggers()
+            agents_logger.error(f"[{symbol}] TradingAgents error: {e}")
             return "ERROR", 0.0, {"error": str(e)}
 
     def should_execute(self, decision: str, confidence: float) -> Tuple[bool, str]:

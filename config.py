@@ -45,6 +45,9 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DATA_PROVIDER = os.getenv("DATA_PROVIDER", "yfinance")  # yfinance or alphavantage
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY", "")
 
+# AI Mode: "indicator_ai" = only on indicator signals, "independent" = all stocks
+AI_MODE = os.getenv("AI_MODE", "indicator_ai").lower()
+
 # Reminder flag
 if T212_MODE == "demo":
     print("REMINDER: Using T212 DEMO API - Switch website to https://demo.trading212.com for testing")

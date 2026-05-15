@@ -437,6 +437,16 @@
             overflow-y: auto;
             padding-right: 5px;
         }
+        .token-odometer {
+            margin-left: auto;
+            font-size: 11px;
+            color: #22c55e;
+            background: rgba(34, 197, 94, 0.1);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
 
             </style>
 </head>
@@ -498,6 +508,11 @@
                 <label style="margin-left:16px;display:flex;align-items:center;gap:6px;font-size:12px;color:#888;">
                     <input type="checkbox" id="autoCloseCheckbox" onchange="updateAutoClose()">
                     Auto-close 20min before market close
+                    <span style="margin-left:16px;font-size:12px;color:#888;">AI Mode:</span>
+                    <select id="aiModeSelect" onchange="updateAIMode()" style="background:#1a1a2e;color:#00d4ff;font-size:12px;border:1px solid #333;padding:2px 6px;border-radius:4px;">
+                        <option value="indicator_ai">Indicator → AI</option>
+                        <option value="independent">AI All Stocks</option>
+                    </select>
                 </label>
             </div>
 
@@ -505,7 +520,7 @@
             <div class="open-trades-panel">
                 <div class="open-trades-header">
                     <h3>Open Trades</h3>
-                    <button class="refresh-btn" onclick="loadOpenTrades()">↻</button>
+                    
                 </div>
                 <div class="trades-table-container">
                     <table class="trades-table">
@@ -528,11 +543,11 @@
                     <span>Unrealized: <strong id="unrealizedPnL">£0</strong></span>
                 </div>
                 <div class="pnl-summary">
-                    <span>Daily P&L: <strong id="dailyPnL">£0</strong></span>
-                    <span>Yesterday Realized: <strong id="yesterdayRealizedPnL">£0</strong></span>
-                    <span>Monthly P&L: <strong id="monthlyPnL">£0</strong></span>
-                    <span>Yearly P&L: <strong id="yearlyPnL">£0</strong></span>
-                    <span>All-Time P&L: <strong id="allTimePnL">£0</strong></span>
+                    <span>Daily P&L: <strong><span id="dailyPnLEmoji"></span> <span id="dailyPnL">£0</span></strong></span>
+                    <span>Yesterday Realized: <strong><span id="yesterdayRealizedPnLEmoji"></span> <span id="yesterdayRealizedPnL">£0</span></strong></span>
+                    <span>Monthly P&L: <strong><span id="monthlyPnLEmoji"></span> <span id="monthlyPnL">£0</span></strong></span>
+                    <span>Yearly P&L: <strong><span id="yearlyPnLEmoji"></span> <span id="yearlyPnL">£0</span></strong></span>
+                    <span>All-Time P&L: <strong><span id="allTimePnLEmoji"></span> <span id="allTimePnL">£0</span></strong></span>
                 </div>
                 <button id="emergencyStopBtn" onclick="emergencyStop()">
                     EMERGENCY STOP -- SELL ALL AND STOP TRADING
@@ -545,6 +560,7 @@
             <div class="agent-chat-header">
                 <div class="live-dot"></div>
                 <h3>Live Agent Analysis</h3>
+                <div class="token-odometer" id="tokenOdometer">⚡ 0</div>
             </div>
             <div id="agentChatStream" class="agent-chat-stream">
                 <div class="empty-chat">Waiting for analysis...</div>
@@ -606,11 +622,12 @@
                         const price = p.current_price || p.currentPrice || 0;
                         const value = qty * price;
                         const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+                        const pnlEmoji = pnl > 0 ? '📈' : pnl < 0 ? '📉' : '➖';
                         return `<tr>
                             <td>${p.symbol || '—'}</td>
                             <td>£${value.toFixed(2)}</td>
-                            <td class="${pnlClass}">£${pnl.toFixed(2)}</td>
-                            <td class="${pnlClass}">${pnlPct.toFixed(1)}%</td>
+                            <td class="${pnlClass}">${pnlEmoji} £${pnl.toFixed(2)}</td>
+                            <td class="${pnlClass}">${pnlEmoji} ${pnlPct.toFixed(1)}%</td>
                         </tr>`;
                     }).join('');
                 }
@@ -619,40 +636,24 @@
                 document.getElementById('todayTradesCount').textContent = data.todayCount || 0;
                 document.getElementById('unrealizedPnL').textContent = `£${(data.totalPnL || 0).toFixed(2)}`;
 
-                // Yesterday's realized P&L
-                const realized = data.realizedPnl || 0;
-                const rElem = document.getElementById('realizedPnl');
-                rElem.textContent = `£${realized.toFixed(2)}`;
-                rElem.className = realized >= 0 ? 'pnl-positive' : 'pnl-negative';
+                function setPnlWithEmoji(id, emojiId, value) {
+                    const elem = document.getElementById(id);
+                    const emojiElem = document.getElementById(emojiId);
+                    elem.textContent = `£${value.toFixed(2)}`;
+                    elem.className = value >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    emojiElem.textContent = value > 0 ? '📈' : value < 0 ? '📉' : '➖';
+                }
 
                 // Daily P&L
-                const daily = data.dailyPnL || 0;
-                const dElem = document.getElementById('dailyPnL');
-                dElem.textContent = `£${daily.toFixed(2)}`;
-                dElem.className = daily >= 0 ? 'pnl-positive' : 'pnl-negative';
+                setPnlWithEmoji('dailyPnL', 'dailyPnLEmoji', data.dailyPnL || 0);
 
                 // Monthly/Yearly/All-Time P&L
-                const monthly = data.monthlyPnL || 0;
-                const yearly = data.yearlyPnL || 0;
-                const alltime = data.allTimePnL || 0;
-
-                const mElem = document.getElementById('monthlyPnL');
-                mElem.textContent = `£${monthly.toFixed(2)}`;
-                mElem.className = monthly >= 0 ? 'pnl-positive' : 'pnl-negative';
-
-                const yElem = document.getElementById('yearlyPnL');
-                yElem.textContent = `£${yearly.toFixed(2)}`;
-                yElem.className = yearly >= 0 ? 'pnl-positive' : 'pnl-negative';
-
-                const aElem = document.getElementById('allTimePnL');
-                aElem.textContent = `£${alltime.toFixed(2)}`;
-                aElem.className = alltime >= 0 ? 'pnl-positive' : 'pnl-negative';
+                setPnlWithEmoji('monthlyPnL', 'monthlyPnLEmoji', data.monthlyPnL || 0);
+                setPnlWithEmoji('yearlyPnL', 'yearlyPnLEmoji', data.yearlyPnL || 0);
+                setPnlWithEmoji('allTimePnL', 'allTimePnLEmoji', data.allTimePnL || 0);
 
                 // Yesterday Realized P&L
-                const yRealized = data.yesterdayRealizedPnL || 0;
-                const yrElem = document.getElementById('yesterdayRealizedPnL');
-                yrElem.textContent = `£${yRealized.toFixed(2)}`;
-                yrElem.className = yRealized >= 0 ? 'pnl-positive' : 'pnl-negative';
+                setPnlWithEmoji('yesterdayRealizedPnL', 'yesterdayRealizedPnLEmoji', data.yesterdayRealizedPnL || 0);
             } catch (e) {
                 console.error('Failed to load trades:', e);
             }
@@ -904,6 +905,18 @@
             }, 5000);
         }
 
+        // Token odometer
+        async function updateTokenOdometer() {
+            try {
+                const res = await fetch('/api/tokens/daily');
+                const data = await res.json();
+                const el = document.getElementById('tokenOdometer');
+                el.textContent = '⚡ ' + data.tokens.toLocaleString();
+            } catch (e) {}
+        }
+        setInterval(updateTokenOdometer, 5000);
+        updateTokenOdometer();
+
         checkMarketStatus();
         // Check market every minute
         setInterval(checkMarketStatus, 60000);
@@ -933,6 +946,15 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ auto_close: autoCloseEnabled })
+            }).catch(() => {});
+        }
+
+        function updateAIMode() {
+            const mode = document.getElementById('aiModeSelect').value;
+            fetch('/api/settings/ai-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: mode })
             }).catch(() => {});
         }
 

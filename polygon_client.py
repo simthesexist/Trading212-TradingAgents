@@ -6,9 +6,29 @@ Fallback: Polygon.io (requires API key, limited free tier)
 
 import os
 import logging
+import time
 from typing import Optional, List, Dict
 
 logger = logging.getLogger(__name__)
+
+def _retry_with_backoff(fn, retries=3, base_delay=2.0, max_delay=16.0):
+    """Execute fn with exponential backoff on failure."""
+    for attempt in range(retries):
+        try:
+            result = fn()
+            if result is None and attempt < retries - 1:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                logger.debug(f"Retry {attempt+1}/{retries} after {delay:.1f}s")
+                time.sleep(delay)
+                continue
+            return result
+        except Exception as e:
+            if attempt < retries - 1:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                logger.warning(f"Attempt {attempt+1}/{retries} failed: {e}, retry in {delay:.1f}s")
+                time.sleep(delay)
+            else:
+                raise
 
 class YFinanceDataProvider:
     """Free Yahoo Finance data provider - no API key needed"""
@@ -27,14 +47,14 @@ class YFinanceDataProvider:
         limit: int = 100
     ) -> Optional[List[Dict]]:
         """
-        Get OHLCV bars using yfinance
+        Get OHLCV bars using yfinance with retry and exponential backoff.
         For LSE stocks, yfinance uses .L suffix (e.g., HSBA.L)
         """
-        try:
+        def _fetch():
             import yfinance as yf
-            
+
             ticker = yf.Ticker(symbol)
-            
+
             # Convert timespan to yfinance interval
             if timespan == "minute":
                 interval = "5m" if multiplier >= 5 else "1m"
@@ -42,14 +62,14 @@ class YFinanceDataProvider:
                 interval = "1h"
             else:
                 interval = "1d"
-            
+
             # Get historical data
             hist = ticker.history(period="5d", interval=interval, actions=False)
-            
+
             if hist.empty or len(hist) < 10:
                 logger.warning(f"Insufficient data for {symbol} from yfinance")
                 return None
-            
+
             bars = []
             for idx, row in hist.iterrows():
                 bars.append({
@@ -61,11 +81,14 @@ class YFinanceDataProvider:
                     "volume": int(row["Volume"]),
                     "timestamp": idx.isoformat()
                 })
-            
+
             return bars[-limit:] if len(bars) > limit else bars
-            
+
+        try:
+            result = _retry_with_backoff(_fetch, retries=3, base_delay=2.0, max_delay=8.0)
+            return result
         except Exception as e:
-            logger.error(f"yfinance failed for {symbol}: {e}")
+            logger.error(f"yfinance failed for {symbol} after retries: {e}")
             return None
     
     def get_ticker_news(self, symbol: str, limit: int = 20) -> Optional[List[Dict]]:

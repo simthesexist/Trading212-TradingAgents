@@ -6,6 +6,8 @@ Tracks open positions, P&L history, and portfolio metrics.
 import logging
 import json
 import os
+import time
+import threading
 from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field, asdict
@@ -94,6 +96,10 @@ class PositionTracker:
         self._last_positions: List[Position] = []
         self._total_fees: float = 0.0
         self._realized_pnl_by_date: Dict[str, float] = {}
+        self._position_cache: List[Position] = []
+        self._position_cache_time: float = 0
+        self._position_cache_ttl: float = 30  # 30 second cache
+        self._cache_lock = threading.Lock()
         self._load_history()
         self._load_realized_pnl()
 
@@ -155,11 +161,16 @@ class PositionTracker:
         self._total_fees += TRADE_FEE * count
 
     def fetch_positions(self) -> List[Position]:
+        """Fetch positions with 30-second rate limiting cache."""
+        now = time.time()
+        with self._cache_lock:
+            if self._position_cache and (now - self._position_cache_time) < self._position_cache_ttl:
+                return self._position_cache
         try:
             raw = self.client.get_positions()
             positions = [Position.from_t212(p) for p in raw]
 
-            now = datetime.now()
+            now_dt = datetime.now()
             total_pnl = sum(p.pnl for p in positions)
             total_exposure = sum(p.exposure for p in positions)
 
@@ -167,7 +178,7 @@ class PositionTracker:
             if self._last_positions:
                 old_by_symbol = {p.symbol: p for p in self._last_positions}
                 new_by_symbol = {p.symbol: p for p in positions}
-                today_key = now.strftime("%Y-%m-%d")
+                today_key = now_dt.strftime("%Y-%m-%d")
                 for symbol, pos in old_by_symbol.items():
                     if symbol not in new_by_symbol:
                         realized = pos.pnl
@@ -176,7 +187,7 @@ class PositionTracker:
                 self._save_realized_pnl()
 
             snapshot = PositionSnapshot(
-                timestamp=now,
+                timestamp=now_dt,
                 positions=positions,
                 total_pnl=total_pnl,
                 total_exposure=total_exposure,
@@ -185,9 +196,15 @@ class PositionTracker:
             self._save_snapshot(snapshot)
             self._last_positions = positions
 
+            with self._cache_lock:
+                self._position_cache = positions
+                self._position_cache_time = time.time()
+
             return positions
         except Exception as e:
             logger.error(f"Failed to fetch positions: {e}")
+            with self._cache_lock:
+                return self._position_cache if self._position_cache else []
             return self._last_positions
 
     def get_summary(self) -> PortfolioSummary:

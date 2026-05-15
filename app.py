@@ -3,8 +3,10 @@ import logging
 import os
 import threading
 import time
+import requests
 from t212_client import T212Client
 import config
+from logging_config import setup_logging
 
 
 def _write_env_mode(mode):
@@ -42,7 +44,7 @@ def _write_env_var(key, value):
         logger.error(f"Failed to write {key} to .env: {e}")
 
 
-from tradingagents_integration import TradingAgentsIntegration
+from tradingagents_integration import TradingAgentsIntegration, get_daily_token_count
 from bank_set_aside import get_bank_set_aside, set_bank_set_aside
 from monitor import get_monitor
 
@@ -68,6 +70,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Setup structured logging
+_loggers = setup_logging()
+logger = logging.getLogger(__name__)
 
 # Global runtime mode (overrides config.T212_MODE)
 RUNTIME_MODE = None
@@ -332,6 +338,11 @@ def chat_with_ai():
         logger.error(f"Chat error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/tokens/daily', methods=['GET'])
+def daily_token_count():
+    """Get daily AI token usage count."""
+    return jsonify({"date": time.strftime("%Y-%m-%d"), "tokens": get_daily_token_count()})
+
 @app.route('/api/chat/stream', methods=['GET'])
 def chat_stream_reasoning():
     """
@@ -560,6 +571,18 @@ def set_auto_close():
         logger.error(f"Failed to set auto-close: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/api/settings/ai-mode", methods=["POST"])
+def set_ai_mode():
+    """Set AI mode: 'indicator_ai' or 'independent'"""
+    data = request.json
+    mode = data.get("mode", "indicator_ai")
+    if mode not in ("indicator_ai", "independent"):
+        return jsonify({"error": "Invalid mode. Use 'indicator_ai' or 'independent'"}), 400
+    config.AI_MODE = mode
+    os.environ["AI_MODE"] = mode
+    _write_env_var("AI_MODE", mode)
+    return jsonify({"status": "success", "mode": mode})
+
 @app.route('/api/orders', methods=['GET'])
 def get_orders():
     """Get order history from T212"""
@@ -618,12 +641,125 @@ def get_symbol_news(symbol: str):
         logger.error(f"News fetch error for {symbol}: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/telegram-callback', methods=['POST'])
+def telegram_callback():
+    """
+    Handle Telegram inline keyboard callbacks (fix buttons).
+    """
+    import json as _json
+    try:
+        data = request.json
+        callback_query = data.get('callback_query', {})
+        callback_data = callback_query.get('data', '')
+        chat_id = callback_query.get('message', {}).get('chat', {}).get('id')
+        message_id = callback_query.get('message', {}).get('message_id')
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+
+        if not token:
+            return jsonify({"error": "no token"}), 400
+
+        # Answer the callback first (removes loading spinner)
+        answer_url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
+        requests.post(answer_url, json={"callback_query_id": callback_query.get('id')}, timeout=5)
+
+        action = ""
+        result_msg = ""
+
+        if callback_data == 'fix_logs':
+            action = "clear_logs"
+            import datetime as _dt
+            log_dir = "/home/server/Workspace/T212/logs"
+            cleared = []
+            for fname in ['errors.log', 'agents.log', 'trading.log', 'monitor.log', 'flask.log']:
+                fpath = os.path.join(log_dir, fname)
+                if os.path.exists(fpath):
+                    open(fpath, 'w').close()
+                    cleared.append(fname)
+            result_msg = f"✅ Cleared {len(cleared)} log files: {', '.join(cleared)}"
+
+        elif callback_data == 'fix_monitor':
+            action = "restart_monitor"
+            from monitor import get_monitor
+            m = get_monitor()
+            if m.running:
+                m.stop()
+            m.start()
+            result_msg = "✅ Monitor restarted successfully"
+
+        elif callback_data == 'fix_all':
+            action = "fix_all"
+            # Clear logs
+            log_dir = "/home/server/Workspace/T212/logs"
+            for fname in ['errors.log', 'agents.log', 'trading.log', 'monitor.log', 'flask.log']:
+                fpath = os.path.join(log_dir, fname)
+                if os.path.exists(fpath):
+                    open(fpath, 'w').close()
+            # Restart monitor
+            from monitor import get_monitor
+            m = get_monitor()
+            if m.running:
+                m.stop()
+            m.start()
+            result_msg = "✅ Logs cleared & monitor restarted"
+
+        else:
+            result_msg = f"Unknown action: {callback_data}"
+
+        # Edit original message with result
+        if chat_id and message_id:
+            edit_url = f"https://api.telegram.org/bot{token}/editMessageText"
+            requests.post(edit_url, json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": result_msg
+            }, timeout=5)
+
+        return jsonify({"status": "ok", "action": action})
+
+    except Exception as e:
+        logger.error(f"Callback error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/fix/<action>', methods=['POST'])
+def api_fix(action: str):
+    """Manual fix endpoints for log clearing and monitor restart."""
+    try:
+        if action == 'logs' or action == 'all':
+            log_dir = "/home/server/Workspace/T212/logs"
+            cleared = []
+            for fname in ['errors.log', 'agents.log', 'trading.log', 'monitor.log', 'flask.log']:
+                fpath = os.path.join(log_dir, fname)
+                if os.path.exists(fpath):
+                    open(fpath, 'w').close()
+                    cleared.append(fname)
+
+        if action == 'monitor' or action == 'all':
+            from monitor import get_monitor
+            m = get_monitor()
+            if m.running:
+                m.stop()
+            m.start()
+
+        return jsonify({"status": "fixed", "action": action})
+    except Exception as e:
+        logger.error(f"Fix error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == '__main__':
     # Initialize T212 client
     init_t212_client()
 
     # Set initial runtime mode from config
     RUNTIME_MODE = config.T212_MODE
+
+    # Populate monitor's watched_stocks with the T212 client
+    from monitor import get_monitor
+    monitor = get_monitor()
+    monitor.set_t212_client(t212_client)
+    monitor.start()
+    logger.info("Monitor started in background")
 
     # Log mode reminder
     if get_mode() == "demo":

@@ -1,0 +1,16 @@
+[Unit]
+Description=T212 Automated Trading System
+After=network.target
+
+[Service]
+Type=simple
+User=server
+WorkingDirectory=/home/server/Workspace/T212
+ExecStart=/usr/bin/python3 app.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/server/Workspace/T212/logs/startup.log
+StandardError=append:/home/server/Workspace/T212/logs/startup.log
+
+[Install]
+WantedBy=multi-user.target

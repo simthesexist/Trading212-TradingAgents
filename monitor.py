@@ -10,7 +10,16 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass, field
+
 import config
+from logging_config import setup_logging
+
+# Setup logging
+_loggers = setup_logging()
+logger = logging.getLogger(__name__)
+trading_logger = logging.getLogger("trading")
+monitor_logger = logging.getLogger("monitor")
+
 from watchlist import LSE_WATCHLIST
 from strategies import STRATEGIES, STRATEGY_KEYS
 from polygon_client import YFinanceDataProvider, PolygonDataProvider
@@ -119,7 +128,7 @@ class StockStatus:
 class StockMonitor:
     def __init__(
         self,
-        poll_interval: int = 60,
+        poll_interval: int = 120,
         on_alert: Optional[Callable[[Alert], None]] = None
     ):
         """
@@ -158,6 +167,13 @@ class StockMonitor:
         self.auto_close_before_market_close = False
         self.t212_client = T212Client()
 
+        # AI analysis queue — serializes TradingAgents calls to avoid 429 rate limits
+        self.ai_analysis_queue: List[Dict] = []
+        self.ai_analysis_in_progress = False
+        self.ai_queue_lock = threading.Lock()
+        self.ai_queue_thread = threading.Thread(target=self._process_ai_queue, daemon=True)
+        self.ai_queue_thread.start()
+
     def set_t212_client(self, client):
         """Set a new T212 client (used when switching demo/live mode)"""
         self.t212_client = client
@@ -172,6 +188,56 @@ class StockMonitor:
         for symbol in LSE_WATCHLIST:
             self.watched_stocks[symbol] = StockStatus(symbol=symbol)
             self.prev_values[symbol] = {}
+
+    def _process_ai_queue(self):
+        """Background thread: processes AI analysis requests one at a time with 2s stagger."""
+        agents_logger = logging.getLogger("agents")
+        trading_logger = logging.getLogger("trading")
+
+        while True:
+            item = None
+            with self.ai_queue_lock:
+                if self.ai_analysis_queue:
+                    item = self.ai_analysis_queue.pop(0)
+
+            if item is None:
+                time.sleep(1)
+                continue
+
+            symbol = item["symbol"]
+            current_price = item["current_price"]
+            rsi = item.get("rsi", 50)
+            macd = item.get("macd", 0)
+            news_sentiment = item.get("news_sentiment", "neutral")
+            ai_mode = item.get("ai_mode", "indicator")
+
+            with self.ai_queue_lock:
+                self.ai_analysis_in_progress = True
+
+            try:
+                # Import here to avoid circular import at module load time
+                from tradingagents_integration import TradingAgentsIntegration
+                agents = TradingAgentsIntegration()
+
+                decision, confidence, details = agents.analyze_and_decide(symbol)
+
+                agents_logger.info(
+                    f"[{symbol}] AI ({ai_mode}): {decision} ({confidence:.0%}) | "
+                    f"RSI={rsi:.0f} MACD={macd:.2f} sentiment={news_sentiment}"
+                )
+                trading_logger.info(
+                    f"AI queue processed: {symbol} → {decision} ({confidence:.0%})"
+                )
+
+            except Exception as e:
+                agents_logger.error(f"[{symbol}] AI analysis failed: {e}")
+
+            finally:
+                with self.ai_queue_lock:
+                    self.ai_analysis_in_progress = False
+
+                # Rate limit protection: sleep 2s between each AI analysis
+                time.sleep(2)
 
     def _calculate_rsi(self, prices: List[float], period: int = 14) -> Optional[float]:
         """Calculate RSI from price list"""
@@ -455,7 +521,7 @@ class StockMonitor:
         return alerts
 
     def check_all_stocks(self) -> List[Alert]:
-        """Check all watched stocks"""
+        """Check all watched stocks in batches of 10 with 2s stagger between batches."""
         all_alerts = []
 
         # Cache positions and balance once per cycle to reduce API calls
@@ -463,9 +529,26 @@ class StockMonitor:
         self.execution_rules.set_cached_positions(cached_positions)
         cached_balance = self._get_balance()
 
-        for symbol in self.watched_stocks:
-            if self.update_stock_data(symbol):
+        symbols = list(self.watched_stocks.keys())
+        total = len(symbols)
+
+        for batch_start in range(0, total, 10):
+            batch = symbols[batch_start:batch_start + 10]
+            logger.info(f"Processing batch {batch_start // 10 + 1} ({batch_start + 1}–{min(batch_start + 10, total)}) of {total} symbols")
+
+            for symbol in batch:
+                # update_stock_data now uses retry + backoff; graceful None on failure
+                data_ok = self.update_stock_data(symbol)
                 status = self.watched_stocks[symbol]
+
+                if not data_ok or status.price == 0:
+                    # Graceful fallback: mark price null but continue cycle
+                    logger.warning(f"No data for {symbol} — marking price null, skipping strategies")
+                    status.price = 0
+                    # Sleep to rate-limit even on failures
+                    time.sleep(0.5)
+                    continue
+
                 current_price = status.price
 
                 # Check stop loss / take profit on open positions
@@ -478,6 +561,20 @@ class StockMonitor:
                 news_alerts = self._check_news_strategies(symbol)
                 alerts.extend(news_alerts)
                 all_alerts.extend(alerts)
+
+                # Queue AI analysis based on AI_MODE
+                # In "independent" mode: queue ALL stocks with valid data
+                # In "indicator_ai" mode: queue only stocks with BUY signal (done below in alert loop)
+                if config.AI_MODE == "independent":
+                    with self.ai_queue_lock:
+                        self.ai_analysis_queue.append({
+                            "symbol": symbol,
+                            "current_price": current_price,
+                            "rsi": status.rsi,
+                            "macd": status.macd,
+                            "news_sentiment": self.sentiment_cache.get(symbol, None),
+                            "ai_mode": "independent"
+                        })
 
                 for alert in alerts:
                     self.alerts.append(alert)
@@ -494,25 +591,44 @@ class StockMonitor:
                         if tp2_result and tp2_result.get("status") == "executed":
                             logger.info(f"TP2 EXIT: {symbol} via {alert.strategy_name}")
 
-                    # Execute buy signals if strategy qualifies
+                    # In indicator_ai mode: queue for AI validation of BUY signals
+                    if config.AI_MODE == "indicator_ai" and alert.action == "BUY":
+                        with self.ai_queue_lock:
+                            self.ai_analysis_queue.append({
+                                "symbol": symbol,
+                                "current_price": current_price,
+                                "rsi": status.rsi,
+                                "macd": status.macd,
+                                "news_sentiment": self.sentiment_cache.get(symbol, None),
+                                "ai_mode": "indicator_ai",
+                                "triggered_by": alert.strategy_key
+                            })
+
+                    # Execute buy signals if strategy qualifies — queue for AI analysis
                     if alert.strategy_key in BUY_SIGNAL_STRATEGIES:
                         can_buy, reason = self.execution_rules.check_buy(
                             symbol, alert, cached_balance, equity=cached_balance, current_price=current_price
                         )
                         if can_buy:
-                            if config.is_auto_execute_enabled():
-                                result = self.execution_rules.execute_buy(
-                                    symbol, alert, cached_balance, equity=cached_balance, current_price=current_price
-                                )
-                                if result.get("status") == "executed":
-                                    logger.info(
-                                        f"BUY EXECUTED: {symbol} — "
-                                        f"{result.get('quantity')} shares"
-                                    )
-                            else:
-                                logger.info(f"BUY SKIPPED (AUTO_EXECUTE=false): {symbol} — signal would execute")
+                            # Queue AI analysis instead of running inline (avoids 429 rate limits)
+                            status = self.watched_stocks[symbol]
+                            with self.ai_queue_lock:
+                                self.ai_analysis_queue.append({
+                                    "symbol": symbol,
+                                    "current_price": current_price,
+                                    "rsi": status.rsi,
+                                    "macd": status.macd,
+                                    "news_sentiment": self.sentiment_cache.get(symbol, None),
+                                    "ai_mode": "indicator"
+                                })
+                            logger.info(f"BUY queued for AI analysis: {symbol}")
                         else:
                             logger.info(f"BUY BLOCKED: {symbol} — {reason}")
+
+            # Stagger between batches
+            if batch_start + 10 < total:
+                logger.debug(f"Batch complete, sleeping 2s before next batch")
+                time.sleep(2)
 
         # Clear position cache to force fresh fetch next cycle
         self.execution_rules.clear_position_cache()
@@ -671,6 +787,8 @@ class StockMonitor:
             "running": self.running,
             "poll_interval": self.poll_interval,
             "is_market_open": is_lse_market_open(),
+            "autoExecuteEnabled": config.is_auto_execute_enabled(),
+            "auto_close": self.auto_close_before_market_close,
             "stocks": stocks_data,
             "recent_alerts": [
                 {
