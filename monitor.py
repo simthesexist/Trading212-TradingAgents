@@ -555,7 +555,7 @@ class StockMonitor:
         """Get available trading balance (freeCash only, not total equity)."""
         try:
             account = self.position_tracker.client.get_account_summary()
-            return float(account.get("freeCash", account.get("totalValue", 0)))
+            return float(account.get("cash", {}).get("availableToTrade", account.get("totalValue", 0)))
         except Exception as e:
             logger.warning(f"Could not fetch balance: {e}")
             return 0.0
