@@ -130,7 +130,7 @@ class ExecutionRules:
             if daily_pnl_pct < -DAILY_LOSS_CAP_PCT:
                 msg = f"Daily loss cap reached ({daily_pnl_pct:+.1f}%)"
                 logger.warning(msg)
-                send_telegram_alert(f"🛡 BUY BLOCKED: {symbol} — {msg}")
+                send_telegram_alert(f"BUY BLOCKED: {symbol} -- {msg}")
                 return False, msg
 
         # Buy cooldown check
@@ -241,7 +241,7 @@ class ExecutionRules:
         can_buy, reason = self.check_buy(symbol, alert, balance, equity, current_price=current_price)
         if not can_buy:
             logger.info(f"Buy blocked for {symbol}: {reason}")
-            send_telegram_alert(f"🛡 BUY BLOCKED: {symbol} — {reason}")
+            send_telegram_alert(f"BUY BLOCKED: {symbol} -- {reason}")
             return {"status": "blocked", "reason": reason}
 
         price = current_price or getattr(alert, 'indicator_value', None) or 0.0

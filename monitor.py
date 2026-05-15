@@ -10,6 +10,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass, field
+import config
 from watchlist import LSE_WATCHLIST
 from strategies import STRATEGIES, STRATEGY_KEYS
 from polygon_client import YFinanceDataProvider, PolygonDataProvider
@@ -499,14 +500,17 @@ class StockMonitor:
                             symbol, alert, cached_balance, equity=cached_balance, current_price=current_price
                         )
                         if can_buy:
-                            result = self.execution_rules.execute_buy(
-                                symbol, alert, cached_balance, equity=cached_balance, current_price=current_price
-                            )
-                            if result.get("status") == "executed":
-                                logger.info(
-                                    f"BUY EXECUTED: {symbol} — "
-                                    f"{result.get('quantity')} shares"
+                            if config.is_auto_execute_enabled():
+                                result = self.execution_rules.execute_buy(
+                                    symbol, alert, cached_balance, equity=cached_balance, current_price=current_price
                                 )
+                                if result.get("status") == "executed":
+                                    logger.info(
+                                        f"BUY EXECUTED: {symbol} — "
+                                        f"{result.get('quantity')} shares"
+                                    )
+                            else:
+                                logger.info(f"BUY SKIPPED (AUTO_EXECUTE=false): {symbol} — signal would execute")
                         else:
                             logger.info(f"BUY BLOCKED: {symbol} — {reason}")
 
@@ -538,9 +542,13 @@ class StockMonitor:
             return None
         should_sell, reason = self.execution_rules.check_sell(symbol, position, current_price, alert=alert)
         if should_sell:
-            result = self.execution_rules.execute_sell(symbol, position, current_price, alert=alert)
-            logger.info(f"SELL TRIGGERED: {symbol} — {reason}")
-            return result
+            if config.is_auto_execute_enabled():
+                result = self.execution_rules.execute_sell(symbol, position, current_price, alert=alert)
+                logger.info(f"SELL TRIGGERED: {symbol} — {reason}")
+                return result
+            else:
+                logger.info(f"SELL SKIPPED (AUTO_EXECUTE=false): {symbol} — signal would execute")
+                return None
         return None
 
     def _get_balance(self) -> float:
@@ -587,11 +595,11 @@ class StockMonitor:
                             order_type="market",
                             side="sell"
                         )
-                        send_telegram_alert(f"AUTO-CLOSE: Sold {pos.symbol} — {int(pos.quantity)} shares @ market")
+                        send_telegram_alert(f"AUTO-CLOSE: Sold {pos.symbol} -- {int(pos.quantity)} shares @ market")
                         logger.warning(f"AUTO-CLOSE executed: {pos.symbol}")
                     except Exception as e:
                         logger.error(f"AUTO-CLOSE failed for {pos.symbol}: {e}")
-                        send_telegram_alert(f"AUTO-CLOSE FAILED: {pos.symbol} — {e}")
+                        send_telegram_alert(f"AUTO-CLOSE FAILED: {pos.symbol} -- {e}")
         except Exception as e:
             logger.error(f"AUTO-CLOSE error: {e}")
 

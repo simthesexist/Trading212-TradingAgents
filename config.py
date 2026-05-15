@@ -6,6 +6,9 @@ load_dotenv()
 # T212 Mode: "demo" or "live"
 T212_MODE = os.getenv("T212_MODE", "demo").lower()
 
+# Auto-execute trades (default: false for manual review)
+AUTO_EXECUTE = os.getenv("AUTO_EXECUTE", "false").lower() == "true"
+
 # API Endpoints
 T212_ENDPOINTS = {
     "demo": "https://demo.trading212.com/api/v0",
@@ -15,6 +18,10 @@ T212_ENDPOINTS = {
 def get_t212_base_url():
     """Get base URL based on current T212_MODE (dynamic, not cached at import time)"""
     return T212_ENDPOINTS.get(T212_MODE, T212_ENDPOINTS["demo"])
+
+def is_auto_execute_enabled():
+    """Check if auto-execute is enabled (reads env each time to allow runtime changes)."""
+    return os.getenv("AUTO_EXECUTE", "false").lower() == "true"
 
 def get_t212_credentials():
     """Get API credentials based on current T212_MODE"""
