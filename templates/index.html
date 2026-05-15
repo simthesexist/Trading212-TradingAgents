@@ -555,14 +555,20 @@
     </div>
 
     <script>
-        let bankAmount = parseInt(localStorage.getItem('bankAmount')) || 0;
+        let bankAmount = 0;
         let accountTotal = 0;
 
         function updateTradingBalance() {
             const input = document.getElementById('bankAmount');
             bankAmount = parseInt(input.value) || 0;
-            localStorage.setItem('bankAmount', bankAmount);
             document.getElementById('bankDisplay').textContent = bankAmount;
+
+            // Persist to server
+            fetch('/api/bank', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ amount: bankAmount })
+            }).catch(() => {});
 
             const trading = Math.max(0, accountTotal - bankAmount);
             const tradingEl = document.getElementById('tradingBalance');
@@ -570,7 +576,14 @@
             tradingEl.style.color = trading > 0 ? '#22c55e' : '#ef4444';
         }
 
-        function loadBankAmount() {
+        async function loadBankAmount() {
+            try {
+                const res = await fetch('/api/bank');
+                const data = await res.json();
+                bankAmount = parseInt(data.amount) || 0;
+            } catch (e) {
+                bankAmount = 0;
+            }
             document.getElementById('bankAmount').value = bankAmount || 0;
             document.getElementById('bankDisplay').textContent = bankAmount || 0;
             updateTradingBalance();

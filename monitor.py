@@ -552,10 +552,15 @@ class StockMonitor:
         return None
 
     def _get_balance(self) -> float:
-        """Get available trading balance (freeCash only, not total equity)."""
+        """Get available trading balance (freeCash minus bank set-aside)."""
         try:
             account = self.position_tracker.client.get_account_summary()
-            return float(account.get("cash", {}).get("availableToTrade", account.get("totalValue", 0)))
+            total = float(account.get("cash", {}).get("availableToTrade", account.get("totalValue", 0)))
+            from bank_set_aside import get_bank_set_aside
+            banked = get_bank_set_aside()
+            trading = max(0, total - banked)
+            logger.debug(f"Balance: total={total}, banked={banked}, trading={trading}")
+            return trading
         except Exception as e:
             logger.warning(f"Could not fetch balance: {e}")
             return 0.0

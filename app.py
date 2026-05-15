@@ -22,8 +22,28 @@ def _write_env_mode(mode):
     except Exception as e:
         logger.error(f"Failed to write T212_MODE to .env: {e}")
 
+def _write_env_var(key, value):
+    """Persist a key=value pair to .env file."""
+    try:
+        with open('.env', 'r') as f:
+            lines = f.readlines()
+        with open('.env', 'w') as f:
+            found = False
+            for line in lines:
+                if line.startswith(f'{key}='):
+                    f.write(f'{key}={value}\n')
+                    found = True
+                else:
+                    f.write(line)
+            if not found:
+                f.write(f'{key}={value}\n')
+        logger.info(f"Persisted {key}={value} to .env")
+    except Exception as e:
+        logger.error(f"Failed to write {key} to .env: {e}")
+
 
 from tradingagents_integration import TradingAgentsIntegration
+from bank_set_aside import get_bank_set_aside, set_bank_set_aside
 from monitor import get_monitor
 
 try:
@@ -142,6 +162,19 @@ def post_mode_api():
         "endpoint": f"https://{'demo' if new_mode == 'demo' else 'live'}.trading212.com/api/v0",
         "account": account
     })
+
+@app.route('/api/bank', methods=['GET'])
+def get_bank():
+    """Get current bank set-aside amount."""
+    return jsonify({"amount": get_bank_set_aside()})
+
+@app.route('/api/bank', methods=['POST'])
+def set_bank():
+    """Set bank set-aside amount."""
+    data = request.json
+    amount = float(data.get("amount", 0))
+    set_bank_set_aside(amount)
+    return jsonify({"amount": get_bank_set_aside(), "status": "updated"})
 
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
