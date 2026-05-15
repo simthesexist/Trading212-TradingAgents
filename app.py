@@ -459,6 +459,7 @@ def get_positions():
             "mode": get_mode(),
             "equity": account.get("cash", {}).get("availableToTrade", 0),
             "cash": account.get("cash", {}).get("availableToTrade", 0),
+            "realizedPnl": account.get("investments", {}).get("realizedProfitLoss", 0),
             "positions": [p.to_dict() for p in summary.positions],
             "count": summary.position_count,
             "totalPnL": summary.total_pnl,
@@ -471,6 +472,7 @@ def get_positions():
             "monthlyPnL": summary.monthly_pnl,
             "yearlyPnL": summary.yearly_pnl,
             "allTimePnL": summary.all_time_pnl,
+            "yesterdayRealizedPnL": summary.yesterday_realized_pnl,
         })
     except Exception as e:
         logger.error(f"Failed to get positions: {e}")

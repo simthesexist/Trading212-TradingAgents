@@ -529,6 +529,7 @@
                 </div>
                 <div class="pnl-summary">
                     <span>Daily P&L: <strong id="dailyPnL">£0</strong></span>
+                    <span>Yesterday Realized: <strong id="yesterdayRealizedPnL">£0</strong></span>
                     <span>Monthly P&L: <strong id="monthlyPnL">£0</strong></span>
                     <span>Yearly P&L: <strong id="yearlyPnL">£0</strong></span>
                     <span>All-Time P&L: <strong id="allTimePnL">£0</strong></span>
@@ -605,6 +606,12 @@
                 document.getElementById('todayTradesCount').textContent = data.todayCount || 0;
                 document.getElementById('unrealizedPnL').textContent = `£${(data.totalPnL || 0).toFixed(2)}`;
 
+                // Yesterday's realized P&L
+                const realized = data.realizedPnl || 0;
+                const rElem = document.getElementById('realizedPnl');
+                rElem.textContent = `£${realized.toFixed(2)}`;
+                rElem.className = realized >= 0 ? 'pnl-positive' : 'pnl-negative';
+
                 // Daily P&L
                 const daily = data.dailyPnL || 0;
                 const dElem = document.getElementById('dailyPnL');
@@ -627,6 +634,12 @@
                 const aElem = document.getElementById('allTimePnL');
                 aElem.textContent = `£${alltime.toFixed(2)}`;
                 aElem.className = alltime >= 0 ? 'pnl-positive' : 'pnl-negative';
+
+                // Yesterday Realized P&L
+                const yRealized = data.yesterdayRealizedPnL || 0;
+                const yrElem = document.getElementById('yesterdayRealizedPnL');
+                yrElem.textContent = `£${yRealized.toFixed(2)}`;
+                yrElem.className = yRealized >= 0 ? 'pnl-positive' : 'pnl-negative';
             } catch (e) {
                 console.error('Failed to load trades:', e);
             }

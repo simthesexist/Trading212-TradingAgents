@@ -18,6 +18,7 @@ TRADE_FEE = 1.0
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 HISTORY_FILE = os.path.join(DATA_DIR, "position_history.json")
 SNAPSHOT_FILE = os.path.join(DATA_DIR, "position_snapshots.json")
+REALIZED_PNL_FILE = os.path.join(DATA_DIR, "realized_pnl.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -81,6 +82,7 @@ class PortfolioSummary:
     monthly_pnl: float = 0.0
     yearly_pnl: float = 0.0
     all_time_pnl: float = 0.0
+    yesterday_realized_pnl: float = 0.0
     today_count: int = 0
     positions: List[Position] = field(default_factory=list)
 
@@ -91,7 +93,9 @@ class PositionTracker:
         self._snapshots: List[PositionSnapshot] = []
         self._last_positions: List[Position] = []
         self._total_fees: float = 0.0
+        self._realized_pnl_by_date: Dict[str, float] = {}
         self._load_history()
+        self._load_realized_pnl()
 
     def _load_history(self):
         if os.path.exists(SNAPSHOT_FILE):
@@ -131,6 +135,22 @@ class PositionTracker:
         except Exception as e:
             logger.warning(f"Could not save position snapshot: {e}")
 
+    def _load_realized_pnl(self):
+        if os.path.exists(REALIZED_PNL_FILE):
+            try:
+                with open(REALIZED_PNL_FILE, "r") as f:
+                    self._realized_pnl_by_date = json.load(f)
+                logger.info(f"Loaded realized P&L for {len(self._realized_pnl_by_date)} days")
+            except Exception as e:
+                logger.warning(f"Could not load realized P&L: {e}")
+
+    def _save_realized_pnl(self):
+        try:
+            with open(REALIZED_PNL_FILE, "w") as f:
+                json.dump(self._realized_pnl_by_date, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not save realized P&L: {e}")
+
     def add_trade_fee(self, count: int = 1):
         self._total_fees += TRADE_FEE * count
 
@@ -142,6 +162,18 @@ class PositionTracker:
             now = datetime.now()
             total_pnl = sum(p.pnl for p in positions)
             total_exposure = sum(p.exposure for p in positions)
+
+            # Detect closed positions and track their P&L as realized
+            if self._last_positions:
+                old_by_symbol = {p.symbol: p for p in self._last_positions}
+                new_by_symbol = {p.symbol: p for p in positions}
+                today_key = now.strftime("%Y-%m-%d")
+                for symbol, pos in old_by_symbol.items():
+                    if symbol not in new_by_symbol:
+                        realized = pos.pnl
+                        self._realized_pnl_by_date[today_key] = self._realized_pnl_by_date.get(today_key, 0.0) + realized
+                        logger.info(f"Realized P&L: {symbol} -> £{realized:.2f}")
+                self._save_realized_pnl()
 
             snapshot = PositionSnapshot(
                 timestamp=now,
@@ -177,6 +209,9 @@ class PositionTracker:
         net_total_pnl = current_total_pnl - self._total_fees
         net_all_time = pnl_by_period.get("all_time", current_total_pnl) - self._total_fees
 
+        yesterday_key = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_realized = self._realized_pnl_by_date.get(yesterday_key, 0.0)
+
         return PortfolioSummary(
             total_pnl=current_total_pnl,
             total_fees=self._total_fees,
@@ -188,6 +223,7 @@ class PositionTracker:
             monthly_pnl=pnl_by_period.get("monthly", current_total_pnl),
             yearly_pnl=pnl_by_period.get("yearly", current_total_pnl),
             all_time_pnl=net_all_time,
+            yesterday_realized_pnl=yesterday_realized,
             today_count=self._count_today_trades(today_start),
             positions=positions,
         )
