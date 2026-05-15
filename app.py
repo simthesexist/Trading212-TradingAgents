@@ -452,10 +452,13 @@ def get_positions():
     try:
         tracker = get_tracker()
         summary = tracker.get_summary()
+        account = get_account_info()
 
         return jsonify({
             "status": "success",
             "mode": get_mode(),
+            "equity": account.get("cash", {}).get("availableToTrade", 0),
+            "cash": account.get("cash", {}).get("availableToTrade", 0),
             "positions": [p.to_dict() for p in summary.positions],
             "count": summary.position_count,
             "totalPnL": summary.total_pnl,
