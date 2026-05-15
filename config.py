@@ -45,8 +45,12 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DATA_PROVIDER = os.getenv("DATA_PROVIDER", "yfinance")  # yfinance or alphavantage
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY", "")
 
-# AI Mode: "indicator_ai" = only on indicator signals, "independent" = all stocks
+# AI Mode: "indicator_ai" = indicator fires then AI validates, "independent" = AI on all stocks
 AI_MODE = os.getenv("AI_MODE", "indicator_ai").lower()
+
+# Enable/disable indicator signals and AI analysis independently
+ENABLE_INDICATORS = os.getenv("ENABLE_INDICATORS", "true").lower() == "true"
+ENABLE_AI = os.getenv("ENABLE_AI", "false").lower() == "true"
 
 # Reminder flag
 if T212_MODE == "demo":

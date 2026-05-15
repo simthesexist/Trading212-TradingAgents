@@ -191,9 +191,9 @@ class ExecutionRules:
         symbol_key = symbol.upper()
         tp1_done = self._is_tp1_triggered(symbol_key)
 
-        # TP1: +10% → sell half
+        # TP1: +10% → sell half (use round() to avoid float comparison issues)
         if not tp1_done:
-            tp1_price = position.avg_price * (1 + TAKE_PROFIT_PCT / 100)
+            tp1_price = round(position.avg_price * (1 + TAKE_PROFIT_PCT / 100), 4)
             if current_price >= tp1_price:
                 gain_pct = ((current_price - position.avg_price) / position.avg_price) * 100
                 return True, (
@@ -267,7 +267,6 @@ class ExecutionRules:
                 instrument_code=symbol,
                 quantity=quantity,
                 order_type="market",
-                side="buy",
             )
             self._daily_trade_count += 1
             self._last_buy_time[symbol.upper()] = time.time()
@@ -315,7 +314,6 @@ class ExecutionRules:
                 instrument_code=symbol,
                 quantity=qty,
                 order_type="market",
-                side="sell",
             )
             self._daily_trade_count += 1
             logger.info(f"SELL executed: {qty} x {symbol} — {reason}{fee_note}")

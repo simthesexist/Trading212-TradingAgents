@@ -574,7 +574,7 @@ class TradingAgentsIntegration:
                 yield step
                 time.sleep(0.5)
 
-    def analyze_and_decide(self, symbol: str, tradingview_signal: Optional[str] = None) -> Tuple[str, float, dict]:
+    def analyze_and_decide(self, symbol: str, tradingview_signal: Optional[str] = None, ai_mode: str = "independent") -> Tuple[str, float, dict]:
         """
         Run TradingAgents analysis and return decision.
         Fetches real OHLCV data and passes it to the graph for reasoning.
@@ -587,39 +587,37 @@ class TradingAgentsIntegration:
             # Fetch real OHLCV data (60s cache)
             market_context = self._get_ohlcv_context(symbol)
 
-            self._init_tradingagents()
+            # Acquire global lock to prevent concurrent access with stream_reasoning
+            acquired = _agents_lock.acquire(timeout=60)
+            if not acquired:
+                agents_logger, _ = _get_specialized_loggers()
+                agents_logger.warning(f"[{symbol}] Could not acquire agents lock, skipping analysis")
+                return "SKIP", 0.0, {"error": "lock_timeout"}
 
-            logger.info(f"Running TradingAgents analysis for {symbol}")
-            agents_logger, trading_logger = _get_specialized_loggers()
+            try:
+                self._init_tradingagents()
 
-            # Build messages with OHLCV context
-            from langchain_core.messages import HumanMessage
+                logger.info(f"Running TradingAgents analysis for {symbol}")
+                agents_logger, trading_logger = _get_specialized_loggers()
 
-            # Log OHLCV context (first few lines for brevity)
-            context_lines = market_context.split("\n")[:4]
-            agents_logger.info(f"[{symbol}] Market context: " + " | ".join(context_lines))
+                # Run TradingAgents propagate with OHLCV context
+                result, decision = self.tradingagents_graph.propagate(symbol, None)
 
-            input_state = {
-                "company_of_interest": symbol,
-                "trade_date": None,
-                "messages": [HumanMessage(content=f"Analyze {symbol}.\n\nMarket Data:\n{market_context}\n\nProvide a BUY/SELL/HOLD decision with confidence and reasoning.")],
-            }
+                # Parse decision and confidence
+                decision = decision.upper() if decision else "HOLD"
 
-            # Run TradingAgents propagate with OHLCV context
-            result, decision = self.tradingagents_graph.propagate(symbol, None)
+                confidence = 0.5
+                if isinstance(result, dict):
+                    confidence = result.get("confidence", 0.5)
 
-            # Parse decision and confidence
-            decision = decision.upper() if decision else "HOLD"
+                agents_logger.info(f"[{symbol}] AI ({ai_mode}): {decision} ({confidence:.0%})")
+                trading_logger.info(f"AI analysis: {symbol} → {decision} ({confidence:.0%})")
+                logger.info(f"TradingAgents decision: {decision} (confidence: {confidence})")
 
-            confidence = 0.5
-            if isinstance(result, dict):
-                confidence = result.get("confidence", 0.5)
+                return decision, confidence, result or {}
 
-            agents_logger.info(f"[{symbol}] TradingAgents result → {decision} ({confidence:.0%})")
-            trading_logger.info(f"TradingAgents analysis: {symbol} → {decision} (confidence: {confidence:.0%})")
-            logger.info(f"TradingAgents decision: {decision} (confidence: {confidence})")
-
-            return decision, confidence, result or {}
+            finally:
+                _agents_lock.release()
 
         except Exception as e:
             logger.error(f"TradingAgents analysis failed: {e}")

@@ -153,13 +153,12 @@ class T212Client:
 
         DISCOVERED: UK stocks use lowercase 'l' suffix, not uppercase. Example: LLOY.L → LLOYl_EQ
         """
-        # If already has T212 suffix (with lowercase l), return as-is
+        # If already has T212 suffix — case-insensitive check to handle LLOYl_EQ
         for suffix in ["_US_EQ", "_l_EQ", "_l_GB", "_l_EU"]:
-            if suffix in instrument_code:
-                return instrument_code  # preserve case
+            if suffix.lower() in instrument_code.lower():
+                return instrument_code  # preserve original case
 
         # Handle UK/LSE stocks (e.g. "HSBA.L" -> "HSBAl_EQ")
-        # UK stocks use lowercase 'l' before _EQ suffix
         if ".L" in instrument_code:
             base = instrument_code.replace(".L", "")
             return f"{base}l_EQ"  # lowercase l

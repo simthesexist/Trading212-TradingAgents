@@ -32,8 +32,6 @@ class T212ExecutionLayer:
                 instrument_code=order.symbol,
                 quantity=order.quantity,
                 order_type=order.order_type,
-                side=side,
-                limit_price=order.limit_price
             )
             logger.info(f"Order executed: {side} {order.quantity} {order.symbol}")
             return {"status": "executed", "order": result}

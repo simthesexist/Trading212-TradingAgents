@@ -8,6 +8,10 @@ from t212_client import T212Client
 import config
 from logging_config import setup_logging
 
+# Rate-limited cache for /api/positions/refresh (30s TTL)
+_positions_refresh_cache = {"data": None, "timestamp": 0}
+_POSITIONS_REFRESH_CACHE_TTL = 30  # seconds
+
 
 def _write_env_mode(mode):
     """Persist runtime mode to .env file so next restart uses correct mode."""
@@ -442,7 +446,6 @@ def emergency_sell_all():
                         instrument_code=pos.symbol,
                         quantity=int(pos.quantity),
                         order_type="market",
-                        side="sell"
                     )
                     from telegram_alerts import send_telegram_alert
                     send_telegram_alert(f"EMERGENCY SELL: {pos.symbol} — {int(pos.quantity)} shares @ market")
@@ -523,6 +526,53 @@ def get_positions():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route('/api/positions/refresh', methods=['GET'])
+def refresh_positions():
+    """Rate-limited position refresh (30s cache). Use for manual refresh button."""
+    global _positions_refresh_cache
+    now = time.time()
+
+    if _positions_refresh_cache["data"] is not None:
+        age = now - _positions_refresh_cache["timestamp"]
+        if age < _POSITIONS_REFRESH_CACHE_TTL:
+            return jsonify({
+                "status": "cached",
+                "age_seconds": round(age),
+                "cache_ttl": _POSITIONS_REFRESH_CACHE_TTL,
+                **_positions_refresh_cache["data"]
+            })
+
+    # Cache miss — rebuild response
+    tracker = get_tracker()
+    tracker.refresh()  # Force re-fetch from T212
+    summary = tracker.get_summary()
+    account = get_account_info()
+
+    data = {
+        "status": "success",
+        "mode": get_mode(),
+        "equity": account.get("cash", {}).get("availableToTrade", 0),
+        "cash": account.get("cash", {}).get("availableToTrade", 0),
+        "realizedPnl": account.get("investments", {}).get("realizedProfitLoss", 0),
+        "positions": [p.to_dict() for p in summary.positions],
+        "count": summary.position_count,
+        "totalPnL": summary.total_pnl,
+        "totalFees": summary.total_fees,
+        "netPnL": summary.net_pnl,
+        "totalExposure": summary.total_exposure,
+        "todayCount": summary.today_count,
+        "dailyPnL": summary.daily_pnl,
+        "weeklyPnL": summary.weekly_pnl,
+        "monthlyPnL": summary.monthly_pnl,
+        "yearlyPnL": summary.yearly_pnl,
+        "allTimePnL": summary.all_time_pnl,
+        "yesterdayRealizedPnL": summary.yesterday_realized_pnl,
+    }
+
+    _positions_refresh_cache = {"data": data, "timestamp": now}
+    return jsonify(data)
+
+
 @app.route('/api/positions/diversification', methods=['GET'])
 def get_diversification():
     """Get portfolio diversification breakdown"""
@@ -573,15 +623,57 @@ def set_auto_close():
 
 @app.route("/api/settings/ai-mode", methods=["POST"])
 def set_ai_mode():
-    """Set AI mode: 'indicator_ai' or 'independent'"""
+    """Set AI mode: 'indicators', 'indicator_ai', or 'independent'"""
     data = request.json
-    mode = data.get("mode", "indicator_ai")
-    if mode not in ("indicator_ai", "independent"):
-        return jsonify({"error": "Invalid mode. Use 'indicator_ai' or 'independent'"}), 400
+    mode = data.get("mode", "indicators")
+    if mode not in ("indicators", "indicator_ai", "independent"):
+        return jsonify({"error": "Invalid mode. Use 'indicators', 'indicator_ai', or 'independent'"}), 400
     config.AI_MODE = mode
     os.environ["AI_MODE"] = mode
     _write_env_var("AI_MODE", mode)
+    # indicators mode = AI disabled
+    config.ENABLE_AI = (mode != "indicators")
     return jsonify({"status": "success", "mode": mode})
+
+@app.route("/api/settings/indicators", methods=["POST"])
+def set_indicators():
+    """Enable or disable indicator signal generation."""
+    data = request.json
+    enabled = bool(data.get("enabled", True))
+    config.ENABLE_INDICATORS = enabled
+    os.environ["ENABLE_INDICATORS"] = "true" if enabled else "false"
+    _write_env_var("ENABLE_INDICATORS", "true" if enabled else "false")
+    logger.info(f"ENABLE_INDICATORS set to {enabled}")
+    return jsonify({"status": "success", "enabled": enabled})
+
+@app.route("/api/settings/ai", methods=["POST"])
+def set_ai():
+    """Enable or disable AI analysis."""
+    data = request.json
+    enabled = bool(data.get("enabled", False))
+    config.ENABLE_AI = enabled
+    os.environ["ENABLE_AI"] = "true" if enabled else "false"
+    _write_env_var("ENABLE_AI", "true" if enabled else "false")
+    logger.info(f"ENABLE_AI set to {enabled}")
+    return jsonify({"status": "success", "enabled": enabled})
+
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    """Return current settings for UI sync on load."""
+    return jsonify({
+        "ai_mode": config.AI_MODE,
+        "indicators_enabled": config.ENABLE_INDICATORS,
+        "ai_enabled": config.ENABLE_AI,
+        "auto_execute": config.is_auto_execute_enabled(),
+        "auto_close": monitor.auto_close_before_market_close if monitor and hasattr(monitor, 'auto_close_before_market_close') else False,
+        "mode": get_mode()
+    })
+
+
+@app.route("/api/status", methods=["GET"])
+def get_status():
+    """Alias for /api/settings — returns current system status"""
+    return get_settings()
 
 @app.route('/api/orders', methods=['GET'])
 def get_orders():

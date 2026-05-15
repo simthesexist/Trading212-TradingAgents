@@ -219,7 +219,7 @@ class StockMonitor:
                 from tradingagents_integration import TradingAgentsIntegration
                 agents = TradingAgentsIntegration()
 
-                decision, confidence, details = agents.analyze_and_decide(symbol)
+                decision, confidence, details = agents.analyze_and_decide(symbol, ai_mode=ai_mode)
 
                 agents_logger.info(
                     f"[{symbol}] AI ({ai_mode}): {decision} ({confidence:.0%}) | "
@@ -556,16 +556,19 @@ class StockMonitor:
                 if sell_result and sell_result.get("status") == "executed":
                     logger.info(f"SELL EXECUTED: {symbol} — position closed via SL/TP")
 
-                alerts = self.check_strategies(symbol)
-                # Also check news-based strategies
-                news_alerts = self._check_news_strategies(symbol)
-                alerts.extend(news_alerts)
-                all_alerts.extend(alerts)
+                alerts = []
+                if config.ENABLE_INDICATORS:
+                    alerts = self.check_strategies(symbol)
+                    # Also check news-based strategies
+                    news_alerts = self._check_news_strategies(symbol)
+                    alerts.extend(news_alerts)
+                    all_alerts.extend(alerts)
 
                 # Queue AI analysis based on AI_MODE
-                # In "independent" mode: queue ALL stocks with valid data
-                # In "indicator_ai" mode: queue only stocks with BUY signal (done below in alert loop)
-                if config.AI_MODE == "independent":
+                # ENABLE_AI=False → skip all AI
+                # independent mode: queue ALL stocks with valid data
+                # indicator_ai mode: queue only stocks with BUY signal (done below in alert loop)
+                if config.ENABLE_AI and config.AI_MODE == "independent":
                     with self.ai_queue_lock:
                         self.ai_analysis_queue.append({
                             "symbol": symbol,
@@ -591,8 +594,8 @@ class StockMonitor:
                         if tp2_result and tp2_result.get("status") == "executed":
                             logger.info(f"TP2 EXIT: {symbol} via {alert.strategy_name}")
 
-                    # In indicator_ai mode: queue for AI validation of BUY signals
-                    if config.AI_MODE == "indicator_ai" and alert.strategy_key in BUY_SIGNAL_STRATEGIES:
+                    # In indicator_ai mode: queue for AI validation of BUY signals (when AI is enabled)
+                    if config.ENABLE_AI and config.AI_MODE == "indicator_ai" and alert.strategy_key in BUY_SIGNAL_STRATEGIES:
                         with self.ai_queue_lock:
                             self.ai_analysis_queue.append({
                                 "symbol": symbol,
@@ -604,24 +607,37 @@ class StockMonitor:
                                 "triggered_by": alert.strategy_key
                             })
 
-                    # Execute buy signals if strategy qualifies — queue for AI analysis
+                    # Execute buy signals if strategy qualifies
                     if alert.strategy_key in BUY_SIGNAL_STRATEGIES:
                         can_buy, reason = self.execution_rules.check_buy(
                             symbol, alert, cached_balance, equity=cached_balance, current_price=current_price
                         )
                         if can_buy:
-                            # Queue AI analysis instead of running inline (avoids 429 rate limits)
-                            status = self.watched_stocks[symbol]
-                            with self.ai_queue_lock:
-                                self.ai_analysis_queue.append({
-                                    "symbol": symbol,
-                                    "current_price": current_price,
-                                    "rsi": status.rsi,
-                                    "macd": status.macd,
-                                    "news_sentiment": self.sentiment_cache.get(symbol, None),
-                                    "ai_mode": "indicator_ai"
-                                })
-                            logger.info(f"BUY queued for AI analysis: {symbol}")
+                            if not config.ENABLE_AI:
+                                # AI disabled — execute directly (respect AUTO_EXECUTE)
+                                if config.is_auto_execute_enabled():
+                                    result = self.execution_rules.execute_buy(
+                                        symbol, alert, cached_balance, equity=cached_balance, current_price=current_price
+                                    )
+                                    logger.info(
+                                        f"BUY EXECUTED: {symbol} — "
+                                        f"{result.get('quantity')} shares"
+                                    )
+                                else:
+                                    logger.info(f"BUY SIGNAL: {symbol} — would execute when auto-execute enabled")
+                            else:
+                                # AI enabled — queue for AI validation before execution
+                                status = self.watched_stocks[symbol]
+                                with self.ai_queue_lock:
+                                    self.ai_analysis_queue.append({
+                                        "symbol": symbol,
+                                        "current_price": current_price,
+                                        "rsi": status.rsi,
+                                        "macd": status.macd,
+                                        "news_sentiment": self.sentiment_cache.get(symbol, None),
+                                        "ai_mode": "indicator_ai"
+                                    })
+                                logger.info(f"BUY queued for AI analysis: {symbol}")
                         else:
                             logger.info(f"BUY BLOCKED: {symbol} — {reason}")
 
@@ -714,7 +730,6 @@ class StockMonitor:
                             instrument_code=pos.symbol,
                             quantity=int(pos.quantity),
                             order_type="market",
-                            side="sell"
                         )
                         send_telegram_alert(f"AUTO-CLOSE: Sold {pos.symbol} -- {int(pos.quantity)} shares @ market")
                         logger.warning(f"AUTO-CLOSE executed: {pos.symbol}")

@@ -508,11 +508,6 @@
                 <label style="margin-left:16px;display:flex;align-items:center;gap:6px;font-size:12px;color:#888;">
                     <input type="checkbox" id="autoCloseCheckbox" onchange="updateAutoClose()">
                     Auto-close 20min before market close
-                    <span style="margin-left:16px;font-size:12px;color:#888;">AI Mode:</span>
-                    <select id="aiModeSelect" onchange="updateAIMode()" style="background:#1a1a2e;color:#00d4ff;font-size:12px;border:1px solid #333;padding:2px 6px;border-radius:4px;">
-                        <option value="indicator_ai">Indicator → AI</option>
-                        <option value="independent">AI All Stocks</option>
-                    </select>
                 </label>
             </div>
 
@@ -561,6 +556,16 @@
                 <div class="live-dot"></div>
                 <h3>Live Agent Analysis</h3>
                 <div class="token-odometer" id="tokenOdometer">⚡ 0</div>
+                <label style="color:#aaa;font-size:11px;margin-left:14px;">
+                    <input type="checkbox" id="indicatorsToggle" onchange="updateIndicators()" checked> Indicators
+                </label>
+                <label style="color:#aaa;font-size:11px;margin-left:10px;">
+                    <input type="checkbox" id="aiToggle" onchange="updateAI()"> AI
+                </label>
+                <select id="aiModeSelect" onchange="updateAIMode()" style="background:#1a1a2e;color:#00d4ff;font-size:11px;border:1px solid #333;padding:2px 6px;border-radius:4px;margin-left:10px;">
+                    <option value="indicator_ai">Indicator → AI</option>
+                    <option value="independent">AI All Stocks</option>
+                </select>
             </div>
             <div id="agentChatStream" class="agent-chat-stream">
                 <div class="empty-chat">Waiting for analysis...</div>
@@ -928,6 +933,9 @@
         // --- Max Open Trades & Auto-Close ---
         let maxOpenTrades = parseInt(localStorage.getItem('maxOpenTrades')) || 10;
         let autoCloseEnabled = localStorage.getItem('autoCloseEnabled') === 'true';
+        let indicatorsEnabled = localStorage.getItem('indicatorsEnabled') !== 'false';
+        let aiEnabled = localStorage.getItem('aiEnabled') === 'true';
+        let aiMode = localStorage.getItem('aiMode') || 'indicator_ai';
 
         function updateMaxOpenTrades() {
             maxOpenTrades = parseInt(document.getElementById('maxOpenTrades').value) || 10;
@@ -951,16 +959,82 @@
 
         function updateAIMode() {
             const mode = document.getElementById('aiModeSelect').value;
+            localStorage.setItem('aiMode', mode);
             fetch('/api/settings/ai-mode', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ mode: mode })
+            }).catch(() => {});
+            // Sync checkboxes to match the selected mode
+            document.getElementById('indicatorsToggle').checked = (mode !== 'independent');
+            document.getElementById('aiToggle').checked = (mode !== 'indicators');
+        }
+
+        function updateIndicators() {
+            const enabled = document.getElementById('indicatorsToggle').checked;
+            const aiEnabledFlag = document.getElementById('aiToggle').checked;
+            localStorage.setItem('indicatorsEnabled', enabled);
+            localStorage.setItem('aiEnabled', aiEnabledFlag);
+            fetch('/api/settings/indicators', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            }).catch(() => {});
+            // When indicators toggle changes, auto-update dropdown to reflect combined state
+            const aiModeSelect = document.getElementById('aiModeSelect');
+            if (!enabled && !aiEnabledFlag) {
+                aiModeSelect.value = 'indicators';
+            } else if (enabled && aiEnabledFlag) {
+                aiModeSelect.value = 'indicator_ai';
+            } else if (!enabled && aiEnabledFlag) {
+                aiModeSelect.value = 'independent';
+            }
+            localStorage.setItem('aiMode', aiModeSelect.value);
+            // Persist the combined mode
+            fetch('/api/settings/ai-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: aiModeSelect.value })
+            }).catch(() => {});
+        }
+
+        function updateAI() {
+            const enabled = document.getElementById('aiToggle').checked;
+            const indicatorsEnabledFlag = document.getElementById('indicatorsToggle').checked;
+            localStorage.setItem('aiEnabled', enabled);
+            localStorage.setItem('indicatorsEnabled', indicatorsEnabledFlag);
+            fetch('/api/settings/ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            }).catch(() => {});
+            // When AI toggle changes, auto-update dropdown to reflect combined state
+            const aiModeSelect = document.getElementById('aiModeSelect');
+            if (!enabled && !indicatorsEnabledFlag) {
+                aiModeSelect.value = 'indicators';
+            } else if (enabled && indicatorsEnabledFlag) {
+                aiModeSelect.value = 'indicator_ai';
+            } else if (!indicatorsEnabledFlag && enabled) {
+                aiModeSelect.value = 'independent';
+            }
+            localStorage.setItem('aiMode', aiModeSelect.value);
+            // Persist the combined mode
+            fetch('/api/settings/ai-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: aiModeSelect.value })
             }).catch(() => {});
         }
 
         function loadSettings() {
             document.getElementById('maxOpenTrades').value = maxOpenTrades;
             document.getElementById('autoCloseCheckbox').checked = autoCloseEnabled;
+            // Sync AI mode controls from server on load
+            fetch('/api/settings').then(r => r.json()).then(data => {
+                document.getElementById('aiModeSelect').value = data.ai_mode || 'indicators';
+                document.getElementById('indicatorsToggle').checked = data.indicators_enabled;
+                document.getElementById('aiToggle').checked = data.ai_enabled;
+            }).catch(() => {});
         }
 
         // --- Real-time clock ---
