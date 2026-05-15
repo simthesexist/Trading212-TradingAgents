@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>T212 Trading Control</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: #16213e;
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #fff;
+        }
+        .mode-display {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .mode-badge {
+            display: inline-block;
+            padding: 12px 30px;
+            border-radius: 50px;
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 2px;
+        }
+        .mode-badge.demo {
+            background: #0d7377;
+            color: #fff;
+        }
+        .mode-badge.live {
+            background: #ff4757;
+            color: #fff;
+            animation: flash 1s infinite;
+        }
+        @keyframes flash {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .endpoint-info {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #888;
+            font-size: 14px;
+        }
+        .warning {
+            background: rgba(255, 71, 87, 0.2);
+            border: 2px solid #ff4757;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: center;
+            color: #ff6b7a;
+            font-weight: bold;
+        }
+        .warning.hidden { display: none; }
+        .buttons {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        .btn:active { transform: scale(0.98); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-demo {
+            background: #0d7377;
+            color: #fff;
+        }
+        .btn-demo:hover:not(:disabled) { background: #14a3a8; }
+        .btn-live {
+            background: #ff4757;
+            color: #fff;
+        }
+        .btn-live:hover:not(:disabled) { background: #ff6b81; }
+        .btn-active { box-shadow: 0 0 0 3px rgba(255,255,255,0.3); }
+        .account-info {
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .account-info h3 {
+            margin-bottom: 15px;
+            color: #aaa;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .account-info .balance {
+            font-size: 32px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 10px;
+        }
+        .account-info .currency {
+            color: #888;
+            font-size: 18px;
+        }
+        .account-info .open-trades-panel {
+            margin-top: 15px;
+            padding: 15px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .open-trades-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .open-trades-header h3 {
+            font-size: 14px;
+            color: #0d7377;
+            margin: 0;
+        }
+        .refresh-btn {
+            background: transparent;
+            border: 1px solid #0d7377;
+            color: #0d7377;
+            border-radius: 4px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .refresh-btn:hover { background: #0d7377; color: white; }
+        .trades-table-container { overflow-x: auto; }
+        .trades-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .trades-table th {
+            text-align: left;
+            color: #888;
+            font-weight: normal;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding: 5px 8px;
+        }
+        .trades-table td {
+            padding: 6px 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .trades-table .no-trades { text-align: center; color: #666; padding: 20px; }
+        .pnl-positive { color: #22c55e; }
+        .pnl-negative { color: #ef4444; }
+        .trades-summary {
+            display: flex;
+            gap: 20px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            font-size: 12px;
+            color: #888;
+        }
+        .trades-summary strong { color: #fff; margin-left: 4px; }
+        .pnl-summary {
+            display: flex;
+            gap: 20px;
+            margin-top: 8px;
+            padding-top: 8px;
+            font-size: 12px;
+            color: #888;
+        }
+        .pnl-summary strong { margin-left: 4px; }
+        .pnl-summary .pnl-positive { color: #22c55e; }
+        .pnl-summary .pnl-negative { color: #ef4444; }
+        #emergencyStopBtn {
+            background: #dc2626;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+            margin-top: 8px;
+            font-size: 13px;
+        }
+        #emergencyStopBtn:hover { background: #b91c1c; }
+        #emergencyStopBtn:disabled { background: #555; cursor: not-allowed; }
+        .account-info .bank-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        .bank-label {
+            color: #888;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .bank-input {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 6px;
+            padding: 6px 10px;
+            color: #fff;
+            font-size: 14px;
+            width: 100px;
+            text-align: right;
+        }
+        .bank-input:focus {
+            outline: none;
+            border-color: #0d7377;
+        }
+        .bank-input::placeholder { color: #555; }
+        .balance-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin: 8px 0;
+        }
+        .balance-item {
+            text-align: center;
+        }
+        .balance-item-label {
+            display: block;
+            font-size: 10px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 2px;
+        }
+        .balance-item-value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #ccc;
+        }
+        .balance-separator {
+            color: #444;
+            font-size: 18px;
+        }
+        .status {
+            text-align: center;
+            margin-top: 20px;
+            color: #888;
+            font-size: 14px;
+        }
+        .confirm-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            justify-content: center;
+            align-items: center;
+        }
+        .confirm-modal.show { display: flex; }
+        .confirm-box {
+            background: #16213e;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 400px;
+            text-align: center;
+        }
+        .confirm-box h2 {
+            color: #ff4757;
+            margin-bottom: 15px;
+        }
+        .confirm-box p {
+            color: #aaa;
+            margin-bottom: 25px;
+        }
+        .confirm-buttons {
+            display: flex;
+            gap: 15px;
+        }
+        .confirm-buttons .btn {
+            padding: 12px 20px;
+        }
+        .btn-cancel {
+            background: #444;
+            color: #fff;
+        }
+
+        /* Market Status */
+        .market-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 15px;
+            background: rgba(0,0,0,0.4);
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .market-status-inner {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+        .market-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-top: 3px;
+        }
+        .market-dot.open { background: #22c55e; }
+        .market-dot.closed { background: #eab308; }
+        .market-dot.weekend { background: #888; }
+        .market-info { display: flex; flex-direction: column; align-items: center; text-align: center; }
+        #marketText { font-weight: 600; font-size: 14px; }
+        .market-text-open { color: #22c55e; }
+        .market-text-closed { color: #eab308; }
+        .market-hours { color: #888; font-size: 11px; margin-top: 2px; }
+
+        /* Autonomous Agent Chat Panel */
+        .agent-chat-panel {
+            margin-top: 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding-top: 20px;
+        }
+        .agent-chat-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .agent-chat-header h3 {
+            color: #fff;
+            font-size: 14px;
+        }
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: #22c55e;
+            border-radius: 50%;
+            animation: livePulse 1.5s infinite;
+        }
+        @keyframes livePulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .agent-chat-stream {
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 12px;
+            max-height: 450px;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+        }
+        .agent-msg {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            animation: slideIn 0.25s ease;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .agent-msg .msg-time {
+            color: #555;
+            font-size: 10px;
+            min-width: 55px;
+        }
+        .agent-msg .msg-icon {
+            font-size: 12px;
+        }
+        .agent-msg .msg-body {
+            flex: 1;
+        }
+        .agent-msg .msg-agent {
+            color: #888;
+            font-size: 10px;
+            margin-bottom: 1px;
+        }
+        .agent-msg .msg-text {
+            color: #ccc;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .agent-msg.final .msg-agent {
+            color: #ff9f43;
+        }
+        .agent-msg.final .msg-text {
+            color: #fff;
+            font-weight: bold;
+        }
+        .decision-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 6px;
+        }
+        .decision-badge.buy { background: rgba(34, 197, 94, 0.3); color: #22c55e; }
+        .decision-badge.sell { background: rgba(239, 68, 68, 0.3); color: #ef4444; }
+        .decision-badge.hold { background: rgba(250, 204, 21, 0.3); color: #facc15; }
+        .empty-chat {
+            color: #555;
+            font-size: 12px;
+            text-align: center;
+            padding: 30px;
+        }
+        .chat-separator {
+            text-align: center;
+            color: #0d7377;
+            font-size: 11px;
+            font-weight: bold;
+            padding: 8px;
+            margin: 5px 0;
+            opacity: 0.7;
+        }
+        .agent-chat-stream {
+            max-height: 400px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+        .token-odometer {
+            margin-left: auto;
+            font-size: 11px;
+            color: #22c55e;
+            background: rgba(34, 197, 94, 0.1);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+            </style>
+</head>
+<body>
+    <div class="container">
+        <h1>T212 Trading Control</h1>
+
+        <div class="buttons">
+            <button id="btnDemo" class="btn btn-demo btn-active" onclick="switchMode('demo')">
+                Demo
+            </button>
+            <button id="btnLive" class="btn btn-live" onclick="confirmSwitch()">
+                Live
+            </button>
+        </div>
+
+        <div class="mode-display">
+            <span id="modeBadge" class="mode-badge demo">DEMO</span>
+        </div>
+
+        <div id="endpointInfo" class="endpoint-info">
+            Endpoint: https://demo.trading212.com/api/v0
+        </div>
+
+        <div id="warningBox" class="warning hidden">
+            LIVE MODE — REAL MONEY AT RISK!
+        </div>
+
+        <!-- Market Status -->
+        <div class="market-status">
+            <span class="market-dot closed" id="marketDot"></span>
+            <div class="market-info">
+                <div id="marketText">Checking market hours...</div>
+                <div class="market-hours" id="marketHours">LSE: 07:45-16:45 UTC (15min pre/post)</div>
+            </div>
+        </div>
+
+        <div class="account-info">
+            <h3>Account Balance</h3>
+            <div id="balance" class="balance">—</div>
+            <div id="currency" class="currency"></div>
+            <div class="balance-row">
+                <div class="balance-item">
+                    <span class="balance-item-label">Bank</span>
+                    <span class="balance-item-value">£<span id="bankDisplay">0</span></span>
+                </div>
+                <div class="balance-separator">|</div>
+                <div class="balance-item">
+                    <span class="balance-item-label">Trading</span>
+                    <span class="balance-item-value" id="tradingBalance">£—</span>
+                </div>
+            </div>
+            <div class="bank-row">
+                <span class="bank-label">Set aside Bank:</span>
+                <span>£</span>
+                <input type="number" id="bankAmount" class="bank-input" placeholder="0" value="0" min="0" step="100" onchange="updateTradingBalance()">
+                <span class="bank-label" style="margin-left:16px;">Max Open Trades:</span>
+                <input type="number" id="maxOpenTrades" class="bank-input" placeholder="10" value="10" min="1" max="50" style="width:60px;" onchange="updateMaxOpenTrades()">
+                <label style="margin-left:16px;display:flex;align-items:center;gap:6px;font-size:12px;color:#888;">
+                    <input type="checkbox" id="autoCloseCheckbox" onchange="updateAutoClose()">
+                    Auto-close 20min before market close
+                </label>
+            </div>
+
+            <!-- Open Trades Panel -->
+            <div class="open-trades-panel">
+                <div class="open-trades-header">
+                    <h3>Open Trades</h3>
+                    
+                </div>
+                <div class="trades-table-container">
+                    <table class="trades-table">
+                        <thead>
+                            <tr>
+                                <th>Stock</th>
+                                <th>Value</th>
+                                <th>P&L £</th>
+                                <th>P&L %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="openTradesBody">
+                            <tr><td colspan="4" class="no-trades">No open trades</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="trades-summary">
+                    <span>Open: <strong id="openPositionsCount">0</strong></span>
+                    <span>Today: <strong id="todayTradesCount">0</strong></span>
+                    <span>Unrealized: <strong id="unrealizedPnL">£0</strong></span>
+                </div>
+                <div class="pnl-summary">
+                    <span>Daily P&L: <strong><span id="dailyPnLEmoji"></span> <span id="dailyPnL">£0</span></strong></span>
+                    <span>Yesterday Realized: <strong><span id="yesterdayRealizedPnLEmoji"></span> <span id="yesterdayRealizedPnL">£0</span></strong></span>
+                    <span>Monthly P&L: <strong><span id="monthlyPnLEmoji"></span> <span id="monthlyPnL">£0</span></strong></span>
+                    <span>Yearly P&L: <strong><span id="yearlyPnLEmoji"></span> <span id="yearlyPnL">£0</span></strong></span>
+                    <span>All-Time P&L: <strong><span id="allTimePnLEmoji"></span> <span id="allTimePnL">£0</span></strong></span>
+                </div>
+                <button id="emergencyStopBtn" onclick="emergencyStop()">
+                    EMERGENCY STOP -- SELL ALL AND STOP TRADING
+                </button>
+            </div>
+        </div>
+
+        <!-- Autonomous Agent Reasoning Chat -->
+        <div class="agent-chat-panel">
+            <div class="agent-chat-header">
+                <div class="live-dot"></div>
+                <h3>Live Agent Analysis</h3>
+                <div class="token-odometer" id="tokenOdometer">⚡ 0</div>
+                <label style="color:#aaa;font-size:11px;margin-left:14px;">
+                    <input type="checkbox" id="indicatorsToggle" onchange="updateIndicators()" checked> Indicators
+                </label>
+                <label style="color:#aaa;font-size:11px;margin-left:10px;">
+                    <input type="checkbox" id="aiToggle" onchange="updateAI()"> AI
+                </label>
+                <select id="aiModeSelect" onchange="updateAIMode()" style="background:#1a1a2e;color:#00d4ff;font-size:11px;border:1px solid #333;padding:2px 6px;border-radius:4px;margin-left:10px;">
+                    <option value="indicator_ai">Indicator → AI</option>
+                    <option value="independent">AI All Stocks</option>
+                </select>
+            </div>
+            <div id="agentChatStream" class="agent-chat-stream">
+                <div class="empty-chat">Waiting for analysis...</div>
+            </div>
+        </div>
+
+        <div id="status" class="status">Loading...</div>
+    </div>
+
+    <script>
+        let bankAmount = 0;
+        let accountTotal = 0;
+
+        function updateTradingBalance() {
+            const input = document.getElementById('bankAmount');
+            bankAmount = parseInt(input.value) || 0;
+            document.getElementById('bankDisplay').textContent = bankAmount;
+
+            // Persist to server
+            fetch('/api/bank', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ amount: bankAmount })
+            }).catch(() => {});
+
+            const trading = Math.max(0, accountTotal - bankAmount);
+            const tradingEl = document.getElementById('tradingBalance');
+            tradingEl.textContent = '£' + trading.toFixed(0);
+            tradingEl.style.color = trading > 0 ? '#22c55e' : '#ef4444';
+        }
+
+        async function loadBankAmount() {
+            try {
+                const res = await fetch('/api/bank');
+                const data = await res.json();
+                bankAmount = parseInt(data.amount) || 0;
+            } catch (e) {
+                bankAmount = 0;
+            }
+            document.getElementById('bankAmount').value = bankAmount || 0;
+            document.getElementById('bankDisplay').textContent = bankAmount || 0;
+            updateTradingBalance();
+        }
+
+        async function loadOpenTrades() {
+            try {
+                const res = await fetch('/api/positions');
+                const data = await res.json();
+                const tbody = document.getElementById('openTradesBody');
+                const positions = data.positions || [];
+
+                if (positions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="no-trades">No open trades</td></tr>';
+                } else {
+                    tbody.innerHTML = positions.map(p => {
+                        const pnl = p.pnl || 0;
+                        const pnlPct = p.pnl_percent || 0;
+                        const qty = p.quantity || 0;
+                        const price = p.current_price || p.currentPrice || 0;
+                        const value = qty * price;
+                        const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+                        const pnlEmoji = pnl > 0 ? '📈' : pnl < 0 ? '📉' : '➖';
+                        return `<tr>
+                            <td>${p.symbol || '—'}</td>
+                            <td>£${value.toFixed(2)}</td>
+                            <td class="${pnlClass}">${pnlEmoji} £${pnl.toFixed(2)}</td>
+                            <td class="${pnlClass}">${pnlEmoji} ${pnlPct.toFixed(1)}%</td>
+                        </tr>`;
+                    }).join('');
+                }
+
+                document.getElementById('openPositionsCount').textContent = positions.length;
+                document.getElementById('todayTradesCount').textContent = data.todayCount || 0;
+                document.getElementById('unrealizedPnL').textContent = `£${(data.totalPnL || 0).toFixed(2)}`;
+
+                function setPnlWithEmoji(id, emojiId, value) {
+                    const elem = document.getElementById(id);
+                    const emojiElem = document.getElementById(emojiId);
+                    elem.textContent = `£${value.toFixed(2)}`;
+                    elem.className = value >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    emojiElem.textContent = value > 0 ? '📈' : value < 0 ? '📉' : '➖';
+                }
+
+                // Daily P&L
+                setPnlWithEmoji('dailyPnL', 'dailyPnLEmoji', data.dailyPnL || 0);
+
+                // Monthly/Yearly/All-Time P&L
+                setPnlWithEmoji('monthlyPnL', 'monthlyPnLEmoji', data.monthlyPnL || 0);
+                setPnlWithEmoji('yearlyPnL', 'yearlyPnLEmoji', data.yearlyPnL || 0);
+                setPnlWithEmoji('allTimePnL', 'allTimePnLEmoji', data.allTimePnL || 0);
+
+                // Yesterday Realized P&L
+                setPnlWithEmoji('yesterdayRealizedPnL', 'yesterdayRealizedPnLEmoji', data.yesterdayRealizedPnL || 0);
+            } catch (e) {
+                console.error('Failed to load trades:', e);
+            }
+        }
+
+        const MAX_MESSAGES = 50;
+        let eventSource = null;
+
+        async function loadStatus() {
+            try {
+                const res = await fetch('/api/mode');
+                const data = await res.json();
+                currentMode = data.mode;
+                updateUI(data);
+                updateMarketStatus();
+            } catch (e) {
+                document.getElementById('status').textContent = 'Error loading status';
+            }
+        }
+
+        function updateMarketStatus() {
+            const dot = document.getElementById('marketDot');
+            const text = document.getElementById('marketText');
+            fetch('/monitor').then(r=>r.json()).then(data => {
+                if (data.is_market_open) {
+                    dot.className='market-dot open';
+                    text.textContent='MARKET OPEN';
+                    text.className='market-text-open';
+                } else {
+                    dot.className='market-dot closed';
+                    text.textContent='PAUSED - Outside Trading Hours';
+                    text.className='market-text-closed';
+                }
+            }).catch(()=>{
+                text.className='market-text-closed';
+            });
+        }
+        setInterval(updateMarketStatus, 60000);
+
+        function updateUI(data) {
+            const badge = document.getElementById('modeBadge');
+            const warning = document.getElementById('warningBox');
+            const endpoint = document.getElementById('endpointInfo');
+
+            badge.textContent = data.mode.toUpperCase();
+            badge.className = 'mode-badge ' + data.mode;
+
+            if (data.mode === 'demo') {
+                warning.classList.add('hidden');
+                endpoint.textContent = 'Endpoint: https://demo.trading212.com/api/v0';
+            } else {
+                warning.classList.remove('hidden');
+                endpoint.textContent = 'Endpoint: https://live.trading212.com/api/v0';
+            }
+
+            if (data.account) {
+                accountTotal = data.account.totalValue || 0;
+                document.getElementById('balance').textContent = accountTotal.toFixed(2);
+                document.getElementById('currency').textContent = data.account.currency;
+                updateTradingBalance();
+            }
+        }
+
+        function switchMode(mode) {
+            fetch('/api/mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: mode })
+            }).then(res => res.json()).then(data => {
+                updateUI(data);
+                // Update button states
+                document.getElementById('btnDemo').classList.toggle('btn-active', mode === 'demo');
+                document.getElementById('btnLive').classList.toggle('btn-active', mode === 'live');
+            }).catch(() => {
+                alert('Failed to switch mode');
+            });
+        }
+
+        function confirmSwitch() {
+            if (confirm('WARNING: Switching to LIVE mode will use REAL MONEY.\n\nAre you sure you want to switch to LIVE trading?')) {
+                switchMode('live');
+            }
+        }
+
+        // Autonomous Agent Reasoning Stream
+        let currentSymbol = 'HSBA.L';
+        let symbolIndex = 0;
+        const watchedSymbols = [
+            'HSBA.L', 'LLOY.L', 'STAN.L', 'BARC.L', 'LGEN.L', 'PRU.L', 'NG.L', 'III.L',
+            'BP.L', 'SHEL.L', 'FRES.L', 'GENL.L', 'AZN.L', 'GSK.L',
+            'ULVR.L', 'DGE.L', 'RKT.L', 'BRBY.L', 'ABF.L', 'SBRY.L', 'TSCO.L', 'MKS.L', 'JD.L', 'SMWH.L',
+            'REL.L', 'LSEG.L', 'EXPN.L', 'PSN.L', 'BAB.L', 'RSW.L', 'IAG.L', 'RR.L', 'EZJ.L', 'WIZZ.L', 'ICG.L',
+            'RIO.L', 'BHP.L', 'GLEN.L', 'ANTO.L',
+            'VOD.L', 'FDM.L', 'AAL.L', 'IMB.L', 'SGE.L', 'AUTO.L',
+            'LRE.L', 'UTG.L', 'BLND.L', 'SPX.L', 'Land.L', 'RESI.L',
+            'UU.L', 'SSE.L', 'WPP.L', 'ENT.L', 'BATS.L', 'CCH.L',
+            'CRDA.L', 'JTC.L', 'SYN.L', 'BOW.L', 'XPS.L', 'PLUS.L', 'IPX.L', 'N91.L', 'LIV.L', 'TATE.L',
+            'KGF.L', 'STCM.L', 'DOM.L', 'GNC.L', 'PZC.L', 'HIK.L', 'PTAL.L', 'BME.L', 'CTY.L', 'THRL.L',
+            'ARBB.L', 'GLE.L', 'MONY.L', 'TCAP.L', 'ADF.L'
+        ];
+
+        function getNextSymbol() {
+            symbolIndex = (symbolIndex + 1) % watchedSymbols.length;
+            return watchedSymbols[symbolIndex];
+        }
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT = 5;
+
+        function appendAgentMessage(data) {
+            const stream = document.getElementById('agentChatStream');
+
+            // Remove empty state if present
+            const empty = stream.querySelector('.empty-chat');
+            if (empty) empty.remove();
+
+            // Create message element
+            const div = document.createElement('div');
+            div.className = 'agent-msg' + (data.agent === 'final' ? ' final' : '');
+
+            // Format timestamp
+            const time = data.time || new Date().toLocaleTimeString('en-GB', { hour12: false });
+
+            // Decision badge for final message
+            const badge = data.agent === 'final' && data.decision
+                ? `<span class="decision-badge ${data.decision.toLowerCase()}">${data.decision} ${data.confidence ? (data.confidence * 100).toFixed(0) + '%' : ''}</span>`
+                : '';
+
+            div.innerHTML = `
+                <span class="msg-time">${time}</span>
+                <span class="msg-icon">${data.emoji || '[AI]'}</span>
+                <div class="msg-body">
+                    <div class="msg-agent">${data.name || data.agent || 'Agent'}</div>
+                    <div class="msg-text">${data.message || ''}${badge}</div>
+                </div>
+            `;
+
+            stream.appendChild(div);
+
+            // Trim to MAX_MESSAGES (keep only last 50)
+            while (stream.children.length > MAX_MESSAGES) {
+                stream.removeChild(stream.firstChild);
+            }
+
+            // Auto-scroll to bottom (smooth)
+            stream.scrollTo({ top: stream.scrollHeight, behavior: 'smooth' });
+        }
+
+        function clearAgentStream() {
+            const stream = document.getElementById('agentChatStream');
+            stream.innerHTML = '<div class="empty-chat">Waiting for analysis...</div>';
+        }
+
+        function connectAgentStream(symbol) {
+            // Close existing connection
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+
+            currentSymbol = symbol;
+            reconnectAttempts = 0;
+
+            if (!symbol) {
+                return;
+            }
+
+            // Add separator for new stock (keep messages from previous stocks)
+            const stream = document.getElementById('agentChatStream');
+            const separator = document.createElement('div');
+            separator.className = 'chat-separator';
+            separator.textContent = `--- ${symbol} ---`;
+            stream.appendChild(separator);
+
+            eventSource = new EventSource(`/api/chat/stream?symbol=${encodeURIComponent(symbol)}`);
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    // Skip any done events (no longer sent)
+                    if (data.event === 'done') return;
+                    appendAgentMessage(data);
+                } catch (e) {
+                    // Silently ignore parse errors for keepalive comments
+                }
+            };
+
+            eventSource.onerror = function() {
+                eventSource.close();
+                eventSource = null;
+
+                // Rotate to next symbol on disconnect
+                currentSymbol = getNextSymbol();
+                reconnectAttempts++;
+
+                // Reconnect with exponential backoff (max 5 attempts per symbol)
+                if (reconnectAttempts < MAX_RECONNECT) {
+                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+                    setTimeout(() => { if (marketOpen) connectAgentStream(currentSymbol); }, delay);
+                } else {
+                    reconnectAttempts = 0;  // Reset for next symbol
+                    currentSymbol = getNextSymbol();
+                    setTimeout(() => { if (marketOpen) connectAgentStream(currentSymbol); }, 1000);
+                }
+            };
+        }
+
+        // Auto-start: analyze different symbols on page load (rotating)
+        window.addEventListener('load', function() {
+            loadStatus();
+            loadBankAmount();
+            loadOpenTrades();
+            loadSettings();
+            // Don't start chat immediately - let checkMarketStatus decide
+        });
+
+        // Pause AI chat when market is closed
+        let marketOpen = false;  // Start assuming market is closed
+        let chatStarted = false;  // Track if chat rotation has started
+
+        // Check market and pause/resume chat
+        function checkMarketStatus() {
+            fetch('/monitor').then(r=>r.json()).then(data => {
+                const wasOpen = marketOpen;
+                marketOpen = data.is_market_open;
+
+                if (!marketOpen) {
+                    // Market closed - stop chat stream
+                    if (eventSource) { eventSource.close(); eventSource = null; }
+                } else if (marketOpen && !wasOpen && !chatStarted) {
+                    // Market just opened and chat not started yet - start it
+                    startChatRotation();
+                    chatStarted = true;
+                }
+            }).catch(()=>{});
+        }
+
+        function startChatRotation() {
+            // Start with first symbol
+            currentSymbol = getNextSymbol();
+            connectAgentStream(currentSymbol);
+
+            // Rotate every 5 seconds only when market open
+            setInterval(() => {
+                if (marketOpen) {
+                    currentSymbol = getNextSymbol();
+                    reconnectAttempts = 0;
+                    connectAgentStream(currentSymbol);
+                }
+            }, 5000);
+        }
+
+        // Token odometer
+        async function updateTokenOdometer() {
+            try {
+                const res = await fetch('/api/tokens/daily');
+                const data = await res.json();
+                const el = document.getElementById('tokenOdometer');
+                el.textContent = '⚡ ' + data.tokens.toLocaleString();
+            } catch (e) {}
+        }
+        setInterval(updateTokenOdometer, 5000);
+        updateTokenOdometer();
+
+        checkMarketStatus();
+        // Check market every minute
+        setInterval(checkMarketStatus, 60000);
+        setInterval(loadStatus, 10000);
+
+        // Also refresh open trades every 30 seconds
+        setInterval(loadOpenTrades, 30000);
+
+        // --- Max Open Trades & Auto-Close ---
+        let maxOpenTrades = parseInt(localStorage.getItem('maxOpenTrades')) || 10;
+        let autoCloseEnabled = localStorage.getItem('autoCloseEnabled') === 'true';
+        let indicatorsEnabled = localStorage.getItem('indicatorsEnabled') !== 'false';
+        let aiEnabled = localStorage.getItem('aiEnabled') === 'true';
+        let aiMode = localStorage.getItem('aiMode') || 'indicator_ai';
+
+        function updateMaxOpenTrades() {
+            maxOpenTrades = parseInt(document.getElementById('maxOpenTrades').value) || 10;
+            localStorage.setItem('maxOpenTrades', maxOpenTrades);
+            fetch('/api/settings/max-trades', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ max_open_trades: maxOpenTrades })
+            }).catch(() => {});
+        }
+
+        function updateAutoClose() {
+            autoCloseEnabled = document.getElementById('autoCloseCheckbox').checked;
+            localStorage.setItem('autoCloseEnabled', autoCloseEnabled);
+            fetch('/api/settings/auto-close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ auto_close: autoCloseEnabled })
+            }).catch(() => {});
+        }
+
+        function updateAIMode() {
+            const mode = document.getElementById('aiModeSelect').value;
+            localStorage.setItem('aiMode', mode);
+            fetch('/api/settings/ai-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: mode })
+            }).catch(() => {});
+            // Sync checkboxes to match the selected mode
+            document.getElementById('indicatorsToggle').checked = (mode !== 'independent');
+            document.getElementById('aiToggle').checked = (mode !== 'indicators');
+        }
+
+        function updateIndicators() {
+            const enabled = document.getElementById('indicatorsToggle').checked;
+            const aiEnabledFlag = document.getElementById('aiToggle').checked;
+            localStorage.setItem('indicatorsEnabled', enabled);
+            localStorage.setItem('aiEnabled', aiEnabledFlag);
+            fetch('/api/settings/indicators', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            }).catch(() => {});
+            // When indicators toggle changes, auto-update dropdown to reflect combined state
+            const aiModeSelect = document.getElementById('aiModeSelect');
+            if (!enabled && !aiEnabledFlag) {
+                aiModeSelect.value = 'indicators';
+            } else if (enabled && aiEnabledFlag) {
+                aiModeSelect.value = 'indicator_ai';
+            } else if (!enabled && aiEnabledFlag) {
+                aiModeSelect.value = 'independent';
+            }
+            localStorage.setItem('aiMode', aiModeSelect.value);
+            // Persist the combined mode
+            fetch('/api/settings/ai-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: aiModeSelect.value })
+            }).catch(() => {});
+        }
+
+        function updateAI() {
+            const enabled = document.getElementById('aiToggle').checked;
+            const indicatorsEnabledFlag = document.getElementById('indicatorsToggle').checked;
+            localStorage.setItem('aiEnabled', enabled);
+            localStorage.setItem('indicatorsEnabled', indicatorsEnabledFlag);
+            fetch('/api/settings/ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            }).catch(() => {});
+            // When AI toggle changes, auto-update dropdown to reflect combined state
+            const aiModeSelect = document.getElementById('aiModeSelect');
+            if (!enabled && !indicatorsEnabledFlag) {
+                aiModeSelect.value = 'indicators';
+            } else if (enabled && indicatorsEnabledFlag) {
+                aiModeSelect.value = 'indicator_ai';
+            } else if (!indicatorsEnabledFlag && enabled) {
+                aiModeSelect.value = 'independent';
+            }
+            localStorage.setItem('aiMode', aiModeSelect.value);
+            // Persist the combined mode
+            fetch('/api/settings/ai-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: aiModeSelect.value })
+            }).catch(() => {});
+        }
+
+        function loadSettings() {
+            document.getElementById('maxOpenTrades').value = maxOpenTrades;
+            document.getElementById('autoCloseCheckbox').checked = autoCloseEnabled;
+            // Sync AI mode controls from server on load
+            fetch('/api/settings').then(r => r.json()).then(data => {
+                document.getElementById('aiModeSelect').value = data.ai_mode || 'indicators';
+                document.getElementById('indicatorsToggle').checked = data.indicators_enabled;
+                document.getElementById('aiToggle').checked = data.ai_enabled;
+            }).catch(() => {});
+        }
+
+        // --- Real-time clock ---
+        function updateClock() {
+            const statusEl = document.getElementById('status');
+            const parts = statusEl.textContent.split(' — ');
+            if (parts.length >= 2) {
+                statusEl.textContent = parts[0] + ' — ' + new Date().toLocaleTimeString('en-GB', { hour12: false });
+            } else {
+                statusEl.textContent = 'Connected — ' + new Date().toLocaleTimeString('en-GB', { hour12: false });
+            }
+        }
+        setInterval(updateClock, 1000);
+
+        async function emergencyStop() {
+            if (!confirm('WARNING: EMERGENCY STOP\n\nThis will SELL ALL positions at market price and STOP all trading.\n\nAre you sure?')) return;
+            try {
+                const response = await fetch('/api/emergency/sell-all', {method: 'POST'});
+                const result = await response.json();
+                let msg = 'EMERGENCY SELL RESULTS:\n';
+                if (result.sold && result.sold.length > 0) {
+                    result.sold.forEach(s => msg += `  ${s.symbol}: ${s.qty} shares @ ${s.price}\n`);
+                } else {
+                    msg += '  No positions to sell\n';
+                }
+                await fetch('/api/emergency/stop-trading', {method: 'POST'});
+                document.getElementById('emergencyStopBtn').disabled = true;
+                document.getElementById('emergencyStopBtn').textContent = 'TRADING STOPPED';
+                alert('TRADING STOPPED: ' + msg + '\nTrading has been stopped.');
+            } catch (e) {
+                alert('Emergency stop failed: ' + e);
+            }
+        }
+    </script>
+</body>
+</html>
